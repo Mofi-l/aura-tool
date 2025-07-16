@@ -20,7 +20,7 @@ export const config = {
         auxDataBucket: 'aux-data-bucket',
         projectDetailsBucket: 'project-details-bucket',
         realTimeBucket: 'real-time-databucket',
-        auxPrefixes: ['Aura_NPT_', 'aux_data_']]
+        auxPrefixes: ['Aura_NPT_', 'aux_data_']
     },
 
     // URL Patterns
