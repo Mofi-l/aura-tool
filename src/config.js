@@ -75,7 +75,7 @@ export const config = {
         refreshInterval: 30000,         // 30 seconds
         dashboardUpdateInterval: 10000, // 10 seconds
         minimumTimeThreshold: 5000,     // 5 seconds
-        retryDelay: 1000,              // 1 second
+        retryDelay: 1000,               // 1 second
         maxRetries: 3
     },
 
@@ -92,7 +92,7 @@ export const config = {
         networkError: 'Network error. Please check your connection.',
         invalidPermissions: "You don't have permission to perform this action.",
         dataSubmissionFailed: 'Failed to submit data. Please try again.',
-        invalidEnvironment: 'Please use this tool on a valid Paragon page.',
+        invalidEnvironmonment: 'Please use this tool on a valid Paragon page.',
         scriptLoadError: 'Failed to load required scripts.',
         generalError: 'An unexpected error occurred. Please try again.'
     },
