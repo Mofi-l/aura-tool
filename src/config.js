@@ -19,7 +19,8 @@ export const config = {
     s3: {
         auxDataBucket: 'aux-data-bucket',
         projectDetailsBucket: 'project-details-bucket',
-        realTimeBucket: 'real-time-databucket'
+        realTimeBucket: 'real-time-databucket',
+        auxPrefixes: ['Aura_NPT_', 'aux_data_']]
     },
 
     // URL Patterns
@@ -39,7 +40,8 @@ export const config = {
             'case',
             'dox-search',
             'search'
-        ]
+        ],
+        urlPattern: /^https:\/\/paragon-(na|eu|fe|cn|na-preprod|eu-preprod|fe-preprod)\.amazon\.com\/hz\/(lobby(\/v2)?|.*case.*|dox-search.*|search)$/
     },
 
     // Feature Flags
@@ -47,7 +49,8 @@ export const config = {
         enableDashboard: true,
         enableProjectDetails: true,
         enableFlashData: true,
-        enableRealTimeTracking: true
+        enableRealTimeTracking: true,
+        enableAutoSync: true
     },
 
     // Storage Keys
@@ -59,40 +62,49 @@ export const config = {
         lastLoginDate: 'lastLoginDate',
         lastLogoutDate: 'lastLogoutDate',
         widgetState: 'widgetState',
-        dataModified: 'dataModified'
+        dataModified: 'dataModified',
+        firstAuxUpdateTime: 'firstAuxUpdateTime',
+        offlineTime: 'offlineTime',
+        lastActiveDate: 'lastActiveDate',
+        currentUsername: 'currentUsername',
+        isDataSent: 'isDataSent'
     },
 
     // Timing Configuration
     timing: {
-        refreshInterval: 30000, // 30 seconds
+        refreshInterval: 30000,         // 30 seconds
         dashboardUpdateInterval: 10000, // 10 seconds
-        minimumTimeThreshold: 5000 // 5 seconds
+        minimumTimeThreshold: 5000,     // 5 seconds
+        retryDelay: 1000,              // 1 second
+        maxRetries: 3
     },
 
     // Version Information
     version: {
         current: '2.5',
-        lastUpdated: 'April 2024'
-    },
-
-    // AWS SDK Configuration
-    aws: {
-        cognitoIdentity: {
-            endpoint: 'cognito-idp.eu-north-1.amazonaws.com',
-            region: 'eu-north-1'
-        },
-        s3: {
-            endpoint: 's3.eu-north-1.amazonaws.com',
-            region: 'eu-north-1'
-        }
+        lastUpdated: 'April 2024',
+        checkInterval: 86400000 // 24 hours
     },
 
     // Error Messages
     errorMessages: {
         authFailed: 'Authentication failed. Please try again.',
         networkError: 'Network error. Please check your connection.',
-        invalidPermissions: 'You don't have permission to perform this action.',
-        dataSubmissionFailed: 'Failed to submit data. Please try again.'
+        invalidPermissions: "You don't have permission to perform this action.",
+        dataSubmissionFailed: 'Failed to submit data. Please try again.',
+        invalidEnvironment: 'Please use this tool on a valid Paragon page.',
+        scriptLoadError: 'Failed to load required scripts.',
+        generalError: 'An unexpected error occurred. Please try again.'
+    },
+
+    // AWS SDK Configuration
+    aws: {
+        cognitoIdentity: {
+            endpoint: 'cognito-idp.eu-north-1.amazonaws.com'
+        },
+        s3: {
+            endpoint: 's3.eu-north-1.amazonaws.com'
+        }
     }
 };
 
@@ -110,11 +122,39 @@ export const configUtils = {
         );
     },
 
+    isValidUrl(url) {
+        return config.urlPatterns.urlPattern.test(url);
+    },
+
     getStorageKey(key) {
-        return config.storageKeys[key];
+        return config.storageKeys[key] || null;
     },
 
     isFeatureEnabled(featureName) {
         return config.features[featureName] || false;
+    },
+
+    getAwsConfig() {
+        return {
+            region: config.api.region,
+            credentials: {
+                identityPoolId: config.cognito.IdentityPoolId
+            }
+        };
+    },
+
+    getErrorMessage(errorCode) {
+        return config.errorMessages[errorCode] || config.errorMessages.generalError;
+    },
+
+    getCurrentVersion() {
+        return config.version.current;
+    },
+
+    shouldCheckForUpdates() {
+        const lastCheck = localStorage.getItem('lastUpdateCheck');
+        if (!lastCheck) return true;
+        
+        return Date.now() - parseInt(lastCheck) >= config.version.checkInterval;
     }
 };
