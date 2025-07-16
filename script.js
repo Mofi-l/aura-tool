@@ -1,48 +1,31 @@
-// script.js
+// script.js (in root directory)
 (async function() {
     try {
-        const baseUrl = 'https://mofi-l.github.io/aura-tool';
+        // Check if we're on a valid page
+        const validPattern = /^https:\/\/paragon-(na|eu|fe|cn|na-preprod|eu-preprod|fe-preprod)\.amazon\.com\/hz\/(lobby(\/v2)?|.*case.*|dox-search.*|search)$/;
         
-        // Load AWS SDK and Cognito
-        await loadExternalScript('https://sdk.amazonaws.com/js/aws-sdk-2.1409.0.min.js');
-        await loadExternalScript('https://cdnjs.cloudflare.com/ajax/libs/amazon-cognito-identity-js/5.2.1/amazon-cognito-identity.min.js');
-
-        // Load our modules in order
-        await loadModules([
-            `${baseUrl}/src/config.js`,
-            `${baseUrl}/src/auth.js`,
-            `${baseUrl}/src/loader.js`,
-            `${baseUrl}/src/index.js`
-        ]);
-
-        // Initialize the app
-        if (window.AuraTool) {
-            await window.AuraTool.initialize();
+        if (!validPattern.test(window.location.href)) {
+            console.log('Not on a valid Paragon page');
+            return;
         }
-    } catch (error) {
-        console.error('Error initializing Aura Tool:', error);
-    }
-})();
 
-function loadExternalScript(url) {
-    return new Promise((resolve, reject) => {
+        // Load the main script module
         const script = document.createElement('script');
-        script.src = url;
-        script.onload = resolve;
-        script.onerror = reject;
-        document.head.appendChild(script);
-    });
-}
+        script.type = 'module';
+        script.src = 'https://mofi-l.github.io/aura-tool/src/script.js';
+        
+        script.onerror = (error) => {
+            console.error('Failed to load script:', error);
+        };
 
-function loadModules(urls) {
-    return Promise.all(urls.map(url => {
-        return new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            script.type = 'module';
-            script.src = url;
+        // Add promise to wait for script load
+        await new Promise((resolve, reject) => {
             script.onload = resolve;
             script.onerror = reject;
             document.head.appendChild(script);
         });
-    }));
-}
+
+    } catch (error) {
+        console.error('Error initializing Aura Tool:', error);
+    }
+})();
