@@ -3,17 +3,17 @@
 import { config, configUtils } from './config.js';
 import { Auth } from './auth.js';
 
-class ScriptLoader {
+export class ScriptLoader {
     constructor() {
         this.isLoading = false;
         this.retryCount = 0;
-        this.maxRetries = 3;
+        this.maxRetries = config.timing.maxRetries;
     }
 
     async initialize() {
         try {
             if (!this.validateEnvironment()) {
-                console.log('Invalid environment for script loading');
+                console.log(config.errorMessages.invalidEnvironment);
                 return;
             }
 
@@ -26,15 +26,19 @@ class ScriptLoader {
     }
 
     validateEnvironment() {
-        const currentURL = window.location.href;
-        const urlPattern = /^https:\/\/paragon-(na|eu|fe|cn|na-preprod|eu-preprod|fe-preprod)\.amazon\.com\/hz\/(lobby(\/v2)?|.*case.*|dox-search.*|search)$/;
-        return urlPattern.test(currentURL);
+        return configUtils.isValidUrl(window.location.href);
     }
 
     async loadDependencies() {
-        await this.loadScript('https://cdnjs.cloudflare.com/ajax/libs/amazon-cognito-identity-js/5.2.1/amazon-cognito-identity.min.js');
-        await this.loadScript('https://sdk.amazonaws.com/js/aws-sdk-2.1409.0.min.js');
-    }
+        const dependencies = [
+            'https://cdnjs.cloudflare.com/ajax/libs/amazon-cognito-identity-js/5.2.1/amazon-cognito-identity.min.js',
+            'https://sdk.amazonaws.com/js/aws-sdk-2.1409.0.min.js'
+        ];
+
+        for (const url of dependencies) {
+            await this.loadScript(url);
+        }
+    }  }
 
     loadScript(url) {
         return new Promise((resolve, reject) => {
@@ -73,7 +77,6 @@ class ScriptLoader {
     }
 
     async getAuthToken() {
-        // Try stored credentials first
         const username = localStorage.getItem(config.storageKeys.authUsername);
         const password = localStorage.getItem(config.storageKeys.authPassword);
 
@@ -87,7 +90,6 @@ class ScriptLoader {
             }
         }
 
-        // If no stored credentials or they're invalid, show auth modal
         const credentials = await Auth.showAuthModal();
         if (!credentials) {
             throw new Error('Authentication cancelled');
@@ -111,7 +113,6 @@ class ScriptLoader {
             })
         });
 
-        // Wait for credentials to be initialized
         return new Promise((resolve, reject) => {
             AWS.config.credentials.get(err => {
                 if (err) reject(err);
@@ -127,7 +128,7 @@ class ScriptLoader {
         try {
             const mainScript = document.createElement('script');
             mainScript.type = 'module';
-            mainScript.src = 'https://Ymofi-l.github.io/aura-tool/src/script.js'; // Replace with your actual script URL
+            mainScript.src = `${window.location.origin}/src/main.js`;
 
             mainScript.onerror = () => {
                 throw new Error('Failed to load main script');
@@ -150,35 +151,17 @@ class ScriptLoader {
             localStorage.removeItem(config.storageKeys.authPassword);
         }
 
-        // You can add custom error handling here
-        const errorMessage = config.errorMessages[error.code] || error.message;
+        const errorMessage = configUtils.getErrorMessage(error.code) || error.message;
         this.showErrorNotification(errorMessage);
     }
 
     showErrorNotification(message) {
         // Add your error notification UI logic here
         console.error('Error:', message);
-    }
-
-    // Utility method to check if script is already loaded
-    isScriptLoaded(url) {
-        return Array.from(document.scripts).some(script => script.src === url);
+        alert(`Aura Tool Error: ${message}`);
     }
 }
 
-// Initialize the loader
+// Create and export a default instance
 const loader = new ScriptLoader();
-loader.initialize().catch(error => {
-    console.error('Failed to initialize script loader:', error);
-});
-
-// Add event listener for page visibility changes
-document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) {
-        console.log('Page became visible, checking script status...');
-        loader.initialize().catch(console.error);
-    }
-});
-
-// Export the loader instance
 export default loader;
