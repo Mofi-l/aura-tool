@@ -395,47 +395,9 @@
     </footer>
 
     <script>
-        function launchAuraTool() {
-            const modal = document.createElement('div');
-            modal.className = 'modal';
-            modal.innerHTML = `
-                <div class="modal-content">
-                    <h2>Select Paragon Environment</h2>
-                    <select id="paragonSelect">
-                        <option value="">Select Environment</option>
-                        <option value="na">NA Production</option>
-                        <option value="eu">EU Production</option>
-                        <option value="fe">FE Production</option>
-                        <option value="cn">CN Production</option>
-                        <option value="na-preprod">NA Pre-prod</option>
-                        <option value="eu-preprod">EU Pre-prod</option>
-                        <option value="fe-preprod">FE Pre-prod</option>
-                    </select>
-                    <div class="modal-buttons">
-                        <button onclick="this.closest('.modal').remove()" class="modal-button secondary">Cancel</button>
-                        <button onclick="openParagonPage()" class="modal-button primary">Launch</button>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(modal);
-        }
-
-function openParagonPage() {
-    const select = document.getElementById('paragonSelect');
-    const env = select.value;
-    
-    if (!env) {
-        alert('Please select an environment');
-        return;
-    }
-
-    // Open your tool URL
-    window.open('https://mofi-l.github.io/aura-tool/aura.html', '_blank');
-    
-    // Close the modal
-    document.querySelector('.modal').remove();
+function launchAuraTool() {
+    window.open('https://mofi-l.github.io/aura-tool/Aura.html', '_blank');
 }
-
     </script>
 </body>
 </html>
