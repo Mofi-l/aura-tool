@@ -3,23 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aura</title>
+    <title>Aura Tool - NPT Widget for Paragon</title>
     <link rel="icon" href="https://raw.githubusercontent.com/Mofi-l/static-images/main/Aura.png" type="image/png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
             --primary-color: #6c5ce7;
             --secondary-color: #a393f5;
             --background-color: #0a0a0a;
             --card-bg: #1a1a1a;
+            --card-bg-hover: #242424;
             --text-color: #ffffff;
+            --text-secondary: #a0aec0;
             --border-color: rgba(255, 255, 255, 0.1);
+            --gradient-start: #6c5ce7;
+            --gradient-end: #a393f5;
+            --success-color: #48bb78;
+            --warning-color: #ed8936;
+            --error-color: #f56565;
         }
 
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }
 
         body {
@@ -31,239 +41,504 @@
             flex-direction: column;
         }
 
+        /* Header Styles */
         header {
             background: linear-gradient(145deg, #1a1a1a, #2d2d2d);
-            padding: 2rem;
+            padding: 3rem 2rem;
             text-align: center;
             border-bottom: 1px solid var(--border-color);
+            position: relative;
+            overflow: hidden;
+        }
+
+        header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(circle at center, rgba(108, 92, 231, 0.1) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .logo-container {
+            position: relative;
+            display: inline-block;
+            margin-bottom: 2rem;
         }
 
         .logo {
-            width: 120px;
-            height: 120px;
-            margin-bottom: 1rem;
+            width: 140px;
+            height: 140px;
             animation: float 6s ease-in-out infinite;
+            filter: drop-shadow(0 0 20px rgba(108, 92, 231, 0.3));
         }
 
         @keyframes float {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-10px); }
+            0%, 100% { transform: translateY(0) rotate(0deg); }
+            50% { transform: translateY(-10px) rotate(5deg); }
         }
 
         h1 {
-            font-size: 2.5rem;
+            font-size: 3rem;
+            font-weight: 700;
             margin-bottom: 1rem;
-            backackground: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
+            position: relative;
         }
 
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.2rem;
+            margin-bottom: 1.5rem;
+        }
+
+        /* Main Content Styles */
         main {
             flex: 1;
-            padding: 2rem;
+            padding: 3rem 2rem;
             max-width: 1200px;
             margin: 0 auto;
             width: 100%;
         }
 
-        .installation-section {
-            background: var(--card-bg);
-            border-radius: 15px;
-            padding: 2rem;
-            margin-bottom: 2rem;
-            border: 1px solid var(--border-color);
-            animation: fadeIn 0.5s ease-out;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .installation-steps {
-            list-style: none;
-        }
-
-        .installation-steps li {
-            margin-bottom: 1.5rem;
-            padding-left: 2rem;
-            position: relative;
-        }
-
-        .installation-steps li::before {
-            content: '→';
-            position: absolute;
-            left: 0;
-            color: var(--primary-color);
-        }
-
-        .code-block {
-            background: rgba(0, 0, 0, 0.3);
-            padding: 1rem;
-            border-radius: 8px;
-            margin: 1rem 0;
+        .quick-start-container {
+            text-align: center;
+            padding: 3rem;
+            background: linear-gradient(145deg, rgba(108, 92, 231, 0.1), rgba(163, 147, 245, 0.1));
+            border-radius: 16px;
+            margin: 2rem 0;
+            border: 1px solid rgba(108, 92, 231, 0.2);
             position: relative;
             overflow: hidden;
         }
 
-        .code-block::before {
+        .quick-start-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(circle at center, rgba(108, 92, 231, 0.1) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .launch-button {
+            display: inline-block;
+            padding: 1rem 2rem;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: white;
+            background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .launch-button::before {
             content: '';
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.05), transparent);
-            animation: shine 2s infinite;
+            background: linear-gradient(rgba(255, 255, 255, 0.1), transparent);
+            transform: translateY(-100%);
+            transition: transform 0.3s ease;
         }
 
-        @keyframes shine {
-            0% { transform: translateX(-100%); }
-            100% { transform: translateX(100%); }
-        }
-
-        .button {
-            display: inline-block;
-            padding: 0.8rem 1.5rem;
-            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
-            color: white;
-            text-decoration: none;
-            border-radius: 8px;
-            transition: transform 0.3s ease, box-shadow 0.3s ease;
-            border: none;
-            cursor: pointer;
-            margin-top: 1rem;
-        }
-
-        .button:hover {
+        .launch-button:hover {
             transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(108, 92, 231, 0.4);
+            box-shadow: 0 8px 25px rgba(108, 92, 231, 0.4);
         }
 
+        .launch-button:hover::before {
+            transform: translateY(0);
+        }
+
+        /* Feature Grid Styles */
         .feature-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 1.5rem;
-            margin-top: 2rem;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 2rem;
+            margin-top: 3rem;
         }
 
         .feature-card {
             background: var(--card-bg);
-            padding: 1.5rem;
-            border-radius: 12px;
+            padding: 2rem;
+            border-radius: 16px;
             border: 1px solid var(--border-color);
-            transition: transform 0.3s ease;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, transparent, rgba(108, 92, 231, 0.1), transparent);
+            transform: translateX(-100%);
+            transition: transform 0.6s ease;
         }
 
         .feature-card:hover {
             transform: translateY(-5px);
+            background: var(--card-bg-hover);
+            border-color: var(--primary-color);
         }
 
+        .feature-card:hover::before {
+            transform: translateX(100%);
+        }
+
+        .feature-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1.5rem;
+            color: var(--primary-color);
+        }
+
+        .feature-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--text-color);
+        }
+
+        .feature-description {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+        /* Modal Styles */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            backdrop-filter: blur(8px);
+            animation: modalFadeIn 0.3s ease-out;
+        }
+
+        .modal-content {
+            background: linear-gradient(145deg, #1a1a1a, #2d2d2d);
+            padding: 2.5rem;
+            border-radius: 20px;
+            max-width: 500px;
+            width: 90%;
+            color: var(--text-color);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            animation: modalSlideIn 0.3s ease-out;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .modal-content::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(circle at top right, rgba(108, 92, 231, 0.1), transparent 70%);
+            pointer-events: none;
+        }
+
+        .modal h2 {
+            font-size: 1.5rem;
+            margin-bottom: 1.5rem;
+            color: var(--text-color);
+            position: relative;
+        }
+
+        .modal select {
+            width: 100%;
+            padding: 1rem;
+            background: #2d2d2d;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            color: var(--text-color);
+            margin-bottom: 1.5rem;
+            font-size: 1rem;
+            appearance: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .modal select:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(108, 92, 231, 0.2);
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+        }
+
+        .modal-button {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 10px;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .modal-button.primary {
+            background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+            color: white;
+        }
+
+        .modal-button.secondary {
+            background: #444;
+            color: white;
+        }
+
+        .modal-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        /* Animation Keyframes */
+        @keyframes modalFadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Version Badge */
         .version-badge {
-            display: inline-block;
+            display: inline-flex;
+            align-items: center;
             padding: 0.5rem 1rem;
             background: rgba(108, 92, 231, 0.1);
+            border: 1px solid rgba(108, 92, 231, 0.2);
             border-radius: 20px;
             color: var(--primary-color);
             font-size: 0.9rem;
             margin-top: 1rem;
+            transition: all 0.3s ease;
         }
 
+        .version-badge:hover {
+            background: rgba(108, 92, 231, 0.2);
+            transform: translateY(-2px);
+        }
+
+        /* Footer Styles */
         footer {
             text-align: center;
-            padding: 2rem;
-            background: var(--card-bg);
+            padding: 3rem 2rem;
+            background: linear-gradient(145deg, #1a1a1a, #2d2d2d);
             border-top: 1px solid var(--border-color);
+            position: relative;
+            overflow: hidden;
         }
 
+        footer::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(circle at center, rgba(108, 92, 231, 0.1), transparent 70%);
+            pointer-events: none;
+        }
+
+        .footer-content {
+            position: relative;
+            z-index: 1;
+        }
+
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin: 1.5rem 0;
+        }
+
+        .footer-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: all 0.3s ease;
+        }
+
+        .footer-link:hover {
+            color: var(--primary-color);
+            transform: translateY(-2px);
+        }
+
+        /* Responsive Design */
         @media (max-width: 768px) {
-            header { padding: 1.5rem; }
-            .logo { width: 80px; height: 80px; }
-            h1 { font-size: 2rem; }
-            main { padding: 1rem; }
-            .feature-grid { grid-template-columns: 1fr; }
+            header {
+                padding: 2rem 1rem;
+            }
+
+            .logo {
+                width: 100px;
+                height: 100px;
+            }
+
+            h1 {
+                font-size: 2rem;
+            }
+
+            main {
+                padding: 2rem 1rem;
+            }
+
+            .feature-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .quick-start-container {
+                padding: 2rem 1rem;
+            }
+
+            .modal-content {
+                width: 95%;
+                padding: 1.5rem;
+            }
         }
     </style>
 </head>
 <body>
     <header>
-        <img src="https://raw.githubusercontent.com/Mofi-l/static-images/main/Aura.png" alt="Aura Logo" class="logo">
+        <div class="logo-container">
+            <img src="https://raw.githubusercontent.com/Mofi-l/static-images/main/Aura.png" alt="Aura Logo" class="logo">
+        </div>
         <h1>Aura Tool</h1>
-        <p>Automated Utility Resource Assistant for Paragon</p>
+        <p class="subtitle">Automated Utility Resource Assistant for Paragon</p>
         <span class="version-badge">Version 2.5</span>
     </header>
 
     <main>
-        <section class="installation-section">
-            <h2>Installation Guide</h2>
-            <ol class="installation-steps">
-                <li>
-                    <strong>Authentication:</strong>
-                    Ensure you have valid Paragon credentials.
-                </li>
-                <li>
-                    <strong>Installation Method:</strong>
-                    <div class="code-block">
-                        <p>Drag this link to your bookmarks bar:</p>
-                        <a href="javascript:(function(){
-    if(!/^https:\/\/paragon-(na|eu|fe|cn|na-preprod|eu-preprod|fe-preprod)\.amazon\.com\/hz\/(lobby(\/v2)?|.*case.*|dox-search.*|search)$/.test(window.location.href)){
-        alert('Please use this bookmarklet on a valid Paragon page.');
-        return;
-    }
-    const s=document.createElement('script');
-    s.src='https://mofi-l.github.io/aura-tool/script.js';
-    s.onerror=function(e){console.error('Failed to load Aura Tool:',e);};
-    document.head.appendChild(s);
-})();" 
-                           class="button">
-                            Aura Tool
-                        </a>
-                    </div>
-                </li>
-                <li>
-                    <strong>Verification:</strong>
-                    Visit any Paragon page and click the bookmarklet to verify the installation.
-                </li>
-            </ol>
+        <section class="quick-start-container">
+            <h2>Quick Start</h2>
+            <p>Launch Aura Tool in your preferred Paragon environment:</p>
+            <button onclick="launchAuraTool()" class="launch-button">
+                Launch Aura Tool
+            </button>
         </section>
 
         <section class="feature-grid">
             <div class="feature-card">
-                <h3>Real-time NPT Tracking</h3>
-                <p>Automatically track and manage your NPT data in real-time.</p>
+                <div class="feature-icon">📊</div>
+                <h3 class="feature-title">Real-time NPT Tracking</h3>
+                <p class="feature-description">Automatically track and manage your NPT data with real-time updates and synchronization.</p>
             </div>
             <div class="feature-card">
-                <h3>Project Management</h3>
-                <p>Efficiently manage and track project details and timelines.</p>
+                <div class="feature-icon">📈</div>
+                <h3 class="feature-title">Project Management</h3>
+                <p class="feature-description">Efficiently manage project details, timelines, and track progress in real-time.</p>
             </div>
             <div class="feature-card">
-                <h3>Secure Authentication</h3>
-                <p>AWS Cognito-based secure authentication system.</p>
+                <div class="feature-icon">🔒</div>
+                <h3 class="feature-title">Secure Authentication</h3>
+                <p class="feature-description">AWS Cognito-based secure authentication system ensures data privacy and security.</p>
             </div>
             <div class="feature-card">
-                <h3>Data Analytics</h3>
-                <p>Comprehensive dashboard for NPT data analysis.</p>
+                <div class="feature-icon">📱</div>
+                <h3 class="feature-title">Cross-Platform Support</h3>
+                <p class="feature-description">Works seamlessly across different Paragon environments and platforms.</p>
             </div>
         </section>
     </main>
 
     <footer>
-        <p>Created by mofila@ • Last Updated: April 2024</p>
-        <a href="https://amazon.enterprise.slack.com/archives/C0941UXQ7DJ" class="button" target="_blank" rel="noopener noreferrer">
-            Report Issues
-        </a>
+        <div class="footer-content">
+            <p>Created by mofila@ • Last Updated: April 2024</p>
+            <div class="footer-links">
+                <a href="https://amazon.enterprise.slack.com/archives/C0941UXQ7DJ" class="footer-link" target="_blank" rel="noopener noreferrer">
+                    Report Issues
+                </a>
+                <a href="#" class="footer-link" onclick="launchAuraTool()">Launch Tool</a>
+            </div>
+        </div>
     </footer>
 
-    <script type="module">
-        import { auraApp } from './src/index.js';
-        
-        document.addEventListener('DOMContentLoaded', () => {
-            const validPattern = /^https:\/\/paragon-(na|eu|fe|cn|na-preprod|eu-preprod|fe-preprod)\.amazon\.com\/hz\/(lobby(\/v2)?|.*case.*|dox-search.*|search)$/;
+    <script>
+        function launchAuraTool() {
+            const modal = document.createElement('div');
+            modal.className = 'modal';
             
-            if (validPattern.test(window.location.href)) {
-                auraApp.initialize();
+            modal.innerHTML = `
+                <div class="modal-content">
+                    <h2>Select Paragon Environment</h2>
+                    <select id="paragonSelect">
+                        <option value="">Select Environment</option>
+                        <option value="na">NA Production</option>
+                        <option value="eu">EU Production</option>
+                        <option value="fe">FE Production</option>
+                        <option value="cn">CN Production</option>
+                        <option value="na-preprod">NA Pre-prod</option>
+                        <option value="eu-preprod">EU Pre-prod</option>
+                        <option value="fe-preprod">FE Pre-prod</option>
+                    </select>
+                    <div class="modal-buttons">
+                        <button onclick="this.closest('.modal').remove()" class="modal-button secondary">Cancel</button>
+                        <button onclick="openParagonPage()" class="modal-button primary">Launch</button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+        }
+
+        function openParagonPage() {
+            const select = document.getElementById('paragonSelect');
+            const env = select.value;
+            
+            if (!env) {
+                alert('Please select an environment');
+                return;
             }
-        });
+
+            const baseUrl = `https://paragon-${env}.amazon.com/hz/lobby`;
+            const newWindow = window.open(baseUrl, '_blank');
+            
+            document.querySelector('.modal').remove();
+
+            if (newWindow) {
+                newWindow.onload = function() {
+                    const script = newWindow.document.createElement('script');
+                    script.src = 'https://mofi-l.github.io/aura-tool/script.js';
+                    newWindow.document.head.appendChild(script);
+                };
+            }
+        }
     </script>
 </body>
 </html>
