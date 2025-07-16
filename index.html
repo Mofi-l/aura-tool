@@ -206,15 +206,15 @@
                     <div class="code-block">
                         <p>Drag this link to your bookmarks bar:</p>
                         <a href="javascript:(function(){
-                            if(!/^https:\/\/paragon-(na|eu|fe|cn|na-preprod|eu-preprod|fe-preprod)\.amazon\.com\/hz\/(lobby(\/v2)?|.*case.*|dox-search.*|search)$/.test(window.location.href)){
-                                alert('Please use this bookmarklet on a valid Paragon page.');
-                                return;
-                            }
-                            const s=document.createElement('script');
-                            s.type='module';
-                            s.src='https://mofi-l.github.io/aura-tool/script.js';
-                            document.head.appendChild(s);
-                        })();" 
+    if(!/^https:\/\/paragon-(na|eu|fe|cn|na-preprod|eu-preprod|fe-preprod)\.amazon\.com\/hz\/(lobby(\/v2)?|.*case.*|dox-search.*|search)$/.test(window.location.href)){
+        alert('Please use this bookmarklet on a valid Paragon page.');
+        return;
+    }
+    const s=document.createElement('script');
+    s.src='https://mofi-l.github.io/aura-tool/script.js';
+    s.onerror=function(e){console.error('Failed to load Aura Tool:',e);};
+    document.head.appendChild(s);
+})();" 
                            class="button">
                             Aura Tool
                         </a>
