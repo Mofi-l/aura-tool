@@ -420,38 +420,22 @@
             document.body.appendChild(modal);
         }
 
-        function openParagonPage() {
-            const select = document.getElementById('paragonSelect');
-            const env = select.value;
-            
-            if (!env) {
-                alert('Please select an environment');
-                return;
-            }
+function openParagonPage() {
+    const select = document.getElementById('paragonSelect');
+    const env = select.value;
+    
+    if (!env) {
+        alert('Please select an environment');
+        return;
+    }
 
-            const baseUrl = `https://paragon-${env}.amazon.com/hz/lobby`;
-            
-            // Open Paragon in a new tab
-            const newWindow = window.open(baseUrl, '_blank');
-            
-            // Close the modal
-            document.querySelector('.modal').remove();
+    // Open your tool URL
+    window.open('https://mofi-l.github.io/aura-tool/aura.html', '_blank');
+    
+    // Close the modal
+    document.querySelector('.modal').remove();
+}
 
-            // Add script to the new window
-            if (newWindow) {
-                newWindow.onload = function() {
-                    const script = newWindow.document.createElement('script');
-                    script.innerHTML = `
-                        setTimeout(() => {
-                            const mainScript = document.createElement('script');
-                            mainScript.src = 'https://mofi-l.github.io/aura-tool/script.js';
-                            document.head.appendChild(mainScript);
-                        }, 2000);  // 2-second delay
-                    `;
-                    newWindow.document.head.appendChild(script);
-                };
-            }
-        }
     </script>
 </body>
 </html>
