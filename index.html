@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aura</title>
+    <link rel="icon" href="https://raw.githubusercontent.com/Mofi-l/static-images/main/Aura.png" type="image/png">
+    <style>
+        :root {
+            --primary-color: #6c5ce7;
+            --secondary-color: #a393f5;
+            --background-color: #0a0a0a;
+            --card-bg: #1a1a1a;
+            --text-color: #ffffff;
+            --border-color: rgba(255, 255, 255, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        }
+
+        body {
+            background: var(--background-color);
+            color: var(--text-color);
+            line-height: 1.6;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background: linear-gradient(145deg, #1a1a1a, #2d2d2d);
+            padding: 2rem;
+            text-align: center;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .logo {
+            width: 120px;
+            height: 120px;
+            margin-bottom: 1rem;
+            animation: float 6s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            backackground: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        main {
+            flex: 1;
+            padding: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .installation-section {
+            background: var(--card-bg);
+            border-radius: 15px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            border: 1px solid var(--border-color);
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .installation-steps {
+            list-style: none;
+        }
+
+        .installation-steps li {
+            margin-bottom: 1.5rem;
+            padding-left: 2rem;
+            position: relative;
+        }
+
+        .installation-steps li::before {
+            content: '→';
+            position: absolute;
+            left: 0;
+            color: var(--primary-color);
+        }
+
+        .code-block {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 1rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .code-block::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.05), transparent);
+            animation: shine 2s infinite;
+        }
+
+        @keyframes shine {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        .button {
+            display: inline-block;
+            padding: 0.8rem 1.5rem;
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            border: none;
+            cursor: pointer;
+            margin-top: 1rem;
+        }
+
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(108, 92, 231, 0.4);
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-top: 2rem;
+        }
+
+        .feature-card {
+            background: var(--card-bg);
+            padding: 1.5rem;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            transition: transform 0.3s ease;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .version-badge {
+            display: inline-block;
+            padding: 0.5rem 1rem;
+            background: rgba(108, 92, 231, 0.1);
+            border-radius: 20px;
+            color: var(--primary-color);
+            font-size: 0.9rem;
+            margin-top: 1rem;
+        }
+
+        footer {
+            text-align: center;
+            padding: 2rem;
+            background: var(--card-bg);
+            border-top: 1px solid var(--border-color);
+        }
+
+        @media (max-width: 768px) {
+            header { padding: 1.5rem; }
+            .logo { width: 80px; height: 80px; }
+            h1 { font-size: 2rem; }
+            main { padding: 1rem; }
+            .feature-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <img src="https://raw.githubusercontent.com/Mofi-l/static-images/main/Aura.png" alt="Aura Logo" class="logo">
+        <h1>Aura Tool</h1>
+        <p>Automated Utility Resource Assistant for Paragon</p>
+        <span class="version-badge">Version 2.5</span>
+    </header>
+
+    <main>
+        <section class="installation-section">
+            <h2>Installation Guide</h2>
+            <ol class="installation-steps">
+                <li>
+                    <strong>Authentication:</strong>
+                    Ensure you have valid Paragon credentials.
+                </li>
+                <li>
+                    <strong>Installation Method:</strong>
+                    <div class="code-block">
+                        <p>Drag this link to your bookmarks bar:</p>
+                        <a href="javascript:(function(){
+                            if(!/^https:\/\/paragon-(na|eu|fe|cn|na-preprod|eu-preprod|fe-preprod)\.amazon\.com\/hz\/(lobby(\/v2)?|.*case.*|dox-search.*|search)$/.test(window.location.href)){
+                                alert('Please use this bookmarklet on a valid Paragon page.');
+                                return;
+                            }
+                            const s=document.createElement('script');
+                            s.type='module';
+                            s.src='https://mofi-l.github.io/aura-tool/script.js';
+                            document.head.appendChild(s);
+                        })();" 
+                           class="button">
+                            Aura Tool
+                        </a>
+                    </div>
+                </li>
+                <li>
+                    <strong>Verification:</strong>
+                    Visit any Paragon page and click the bookmarklet to verify the installation.
+                </li>
+            </ol>
+        </section>
+
+        <section class="feature-grid">
+            <div class="feature-card">
+                <h3>Real-time NPT Tracking</h3>
+                <p>Automatically track and manage your NPT data in real-time.</p>
+            </div>
+            <div class="feature-card">
+                <h3>Project Management</h3>
+                <p>Efficiently manage and track project details and timelines.</p>
+            </div>
+            <div class="feature-card">
+                <h3>Secure Authentication</h3>
+                <p>AWS Cognito-based secure authentication system.</p>
+            </div>
+            <div class="feature-card">
+                <h3>Data Analytics</h3>
+                <p>Comprehensive dashboard for NPT data analysis.</p>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>Created by mofila@ • Last Updated: April 2024</p>
+        <a href="https://amazon.enterprise.slack.com/archives/C0941UXQ7DJ" class="button" target="_blank" rel="noopener noreferrer">
+            Report Issues
+        </a>
+    </footer>
+
+    <script type="module">
+        import { auraApp } from './src/index.js';
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            const validPattern = /^https:\/\/paragon-(na|eu|fe|cn|na-preprod|eu-preprod|fe-preprod)\.amazon\.com\/hz\/(lobby(\/v2)?|.*case.*|dox-search.*|search)$/;
+            
+            if (validPattern.test(window.location.href)) {
+                auraApp.initialize();
+            }
+        });
+    </script>
+</body>
+</html>
