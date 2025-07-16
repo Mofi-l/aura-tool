@@ -127,7 +127,7 @@ class ScriptLoader {
         try {
             const mainScript = document.createElement('script');
             mainScript.type = 'module';
-            mainScript.src = 'https://Ymofi-l.github.io/aura-tool/src/main.js'; // Replace with your actual script URL
+            mainScript.src = 'https://Ymofi-l.github.io/aura-tool/src/script.js'; // Replace with your actual script URL
 
             mainScript.onerror = () => {
                 throw new Error('Failed to load main script');
