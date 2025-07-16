@@ -221,52 +221,43 @@
             font-size: 0.95rem;
             line-height: 1.6;
         }
-        /* Modal Styles */
+
+            /* Modal Styles */
         .modal {
             position: fixed;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(0, 0, 0, 0.85);
             display: flex;
             justify-content: center;
             align-items: center;
             z-index: 1000;
             backdrop-filter: blur(8px);
-            animation: modalFadeIn 0.3s ease-out;
+            animation: modalFadeIn 0.3s ease;
         }
 
         .modal-content {
-            background: linear-gradient(145deg, #1a1a1a, #2d2d2d);
+            background: var(--card-bg);
             padding: 2.5rem;
             border-radius: 20px;
             max-width: 500px;
             width: 90%;
             color: var(--text-color);
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            animation: modalSlideIn 0.3s ease-out;
-            position: relative;
-            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border-color);
+            animation: modalSlideIn 0.3s ease;
         }
 
-        .modal-content::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: radial-gradient(circle at top right, rgba(108, 92, 231, 0.1), transparent 70%);
-            pointer-events: none;
+        @keyframes modalFadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
         }
 
-        .modal h2 {
-            font-size: 1.5rem;
-            margin-bottom: 1.5rem;
-            color: var(--text-color);
-            position: relative;
+        @keyframes modalSlideIn {
+            from { transform: translateY(20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
         }
 
         .modal select {
@@ -276,30 +267,33 @@
             border: 1px solid var(--border-color);
             border-radius: 12px;
             color: var(--text-color);
-            margin-bottom: 1.5rem;
+            margin: 1.5rem 0;
             font-size: 1rem;
-            appearance: none;
             cursor: pointer;
-            transition: all 0.3s ease;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 1rem center;
+            background-size: 1em;
         }
 
         .modal select:focus {
             outline: none;
             border-color: var(--primary-color);
-            box-shadow: 0 0 0 3px rgba(108, 92, 231, 0.2);
+            box-shadow: 0 0 0 2px rgba(108, 92, 231, 0.2);
         }
 
         .modal-buttons {
             display: flex;
             gap: 1rem;
             justify-content: flex-end;
+            margin-top: 2rem;
         }
 
         .modal-button {
             padding: 0.75rem 1.5rem;
             border: none;
-            border-radius: 10px;
-            font-size: 0.95rem;
+            border-radius: 8px;
             font-weight: 500;
             cursor: pointer;
             transition: all 0.3s ease;
@@ -320,117 +314,33 @@
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
         }
 
-        /* Animation Keyframes */
-        @keyframes modalFadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-
-        @keyframes modalSlideIn {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
         /* Version Badge */
         .version-badge {
-            display: inline-flex;
-            align-items: center;
+            display: inline-block;
             padding: 0.5rem 1rem;
             background: rgba(108, 92, 231, 0.1);
-            border: 1px solid rgba(108, 92, 231, 0.2);
             border-radius: 20px;
             color: var(--primary-color);
             font-size: 0.9rem;
             margin-top: 1rem;
-            transition: all 0.3s ease;
-        }
-
-        .version-badge:hover {
-            background: rgba(108, 92, 231, 0.2);
-            transform: translateY(-2px);
         }
 
         /* Footer Styles */
         footer {
             text-align: center;
-            padding: 3rem 2rem;
-            background: linear-gradient(145deg, #1a1a1a, #2d2d2d);
+            padding: 2rem;
+            background: var(--card-bg);
             border-top: 1px solid var(--border-color);
-            position: relative;
-            overflow: hidden;
-        }
-
-        footer::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: radial-gradient(circle at center, rgba(108, 92, 231, 0.1), transparent 70%);
-            pointer-events: none;
-        }
-
-        .footer-content {
-            position: relative;
-            z-index: 1;
-        }
-
-        .footer-links {
-            display: flex;
-            justify-content: center;
-            gap: 2rem;
-            margin: 1.5rem 0;
-        }
-
-        .footer-link {
-            color: var(--text-secondary);
-            text-decoration: none;
-            transition: all 0.3s ease;
-        }
-
-        .footer-link:hover {
-            color: var(--primary-color);
-            transform: translateY(-2px);
         }
 
         /* Responsive Design */
         @media (max-width: 768px) {
-            header {
-                padding: 2rem 1rem;
-            }
-
-            .logo {
-                width: 100px;
-                height: 100px;
-            }
-
-            h1 {
-                font-size: 2rem;
-            }
-
-            main {
-                padding: 2rem 1rem;
-            }
-
-            .feature-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .quick-start-container {
-                padding: 2rem 1rem;
-            }
-
-            .modal-content {
-                width: 95%;
-                padding: 1.5rem;
-            }
+            header { padding: 2rem 1rem; }
+            .logo { width: 100px; height: 100px; }
+            h1 { font-size: 2rem; }
+            main { padding: 1.5rem; }
+            .feature-grid { grid-template-columns: 1fr; }
+            .quick-start-container { padding: 1.5rem; }
         }
     </style>
 </head>
@@ -467,33 +377,27 @@
             <div class="feature-card">
                 <div class="feature-icon">🔒</div>
                 <h3 class="feature-title">Secure Authentication</h3>
-                <p class="feature-description">AWS Cognito-based secure authentication system ensures data privacy and security.</p>
+                <p class="feature-description">Enterprise-grade security with AWS Cognito-based authentication system.</p>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">📱</div>
-                <h3 class="feature-title">Cross-Platform Support</h3>
-                <p class="feature-description">Works seamlessly across different Paragon environments and platforms.</p>
+                <h3 class="feature-title">Cross-Platform</h3>
+                <p class="feature-description">Works seamlessly ly across all Paragon environments and platforms.</p>
             </div>
         </section>
     </main>
 
     <footer>
-        <div class="footer-content">
-            <p>Created by mofila@ • Last Updated: April 2024</p>
-            <div class="footer-links">
-                <a href="https://amazon.enterprise.slack.com/archives/C0941UXQ7DJ" class="footer-link" target="_blank" rel="noopener noreferrer">
-                    Report Issues
-                </a>
-                <a href="#" class="footer-link" onclick="launchAuraTool()">Launch Tool</a>
-            </div>
-        </div>
+        <p>Created by mofila@ • Last Updated: April 2024</p>
+        <a href="https://amazon.enterprise.slack.com/archives/C0941UXQ7DJ" class="launch-button" target="_blank" rel="noopener noreferrer">
+            Report Issues
+        </a>
     </footer>
 
     <script>
         function launchAuraTool() {
             const modal = document.createElement('div');
             modal.className = 'modal';
-            
             modal.innerHTML = `
                 <div class="modal-content">
                     <h2>Select Paragon Environment</h2>
@@ -513,7 +417,6 @@
                     </div>
                 </div>
             `;
-            
             document.body.appendChild(modal);
         }
 
@@ -527,14 +430,24 @@
             }
 
             const baseUrl = `https://paragon-${env}.amazon.com/hz/lobby`;
+            
+            // Open Paragon in a new tab
             const newWindow = window.open(baseUrl, '_blank');
             
+            // Close the modal
             document.querySelector('.modal').remove();
 
+            // Add script to the new window
             if (newWindow) {
                 newWindow.onload = function() {
                     const script = newWindow.document.createElement('script');
-                    script.src = 'https://mofi-l.github.io/aura-tool/script.js';
+                    script.innerHTML = `
+                        setTimeout(() => {
+                            const mainScript = document.createElement('script');
+                            mainScript.src = 'https://mofi-l.github.io/aura-tool/script.js';
+                            document.head.appendChild(mainScript);
+                        }, 2000);  // 2-second delay
+                    `;
                     newWindow.document.head.appendChild(script);
                 };
             }
