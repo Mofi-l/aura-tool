@@ -1,4 +1,7 @@
 // src/script.js
+import { config, configUtils } from './config.js';
+import { Auth } from './auth.js';
+import { auraApp } from './index.js';
 
 (function() {
     'use strict';
