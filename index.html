@@ -5,22 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Aura</title>
     <link rel="icon" href="https://raw.githubusercontent.com/Mofi-l/static-images/main/Aura.png" type="image/png">
-    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         :root {
-            --primary-color: #6c5ce7;
-            --primary-light: #8c7ff0;
-            --primary-dark: #4c3cc7;
-            --surface-1: #1e1e1e;
-            --surface-2: #2d2d2d;
-            --surface-3: #333333;
+            --primary-color: #7263f3;
+            --primary-gradient: linear-gradient(135deg, #7263f3 0%, #6e54e7 100%);
+            --glass-bg: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --blur-amount: 10px;
             --text-primary: #ffffff;
             --text-secondary: rgba(255, 255, 255, 0.7);
-            --text-disabled: rgba(255, 255, 255, 0.5);
-            --border-color: rgba(255, 255, 255, 0.12);
-            --elevation-1: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
-            --elevation-2: 0 3px 6px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.12);
-            --elevation-3: 0 10px 20px rgba(0, 0, 0, 0.15), 0 3px 6px rgba(0, 0, 0, 0.1);
         }
 
         * {
@@ -30,189 +25,224 @@
         }
 
         body {
-            background-color: var(--surface-1);
+            background: linear-gradient(135deg, #0f0f1e 0%, #1a1a2e 100%);
             color: var(--text-primary);
-            font-family: 'Google Sans', 'Roboto', sans-serif;
-            line-height: 1.5;
-            -webkit-font-smoothing: antialiased;
+            font-family: 'Poppins', sans-serif;
+            line-height: 1.6;
+            min-height: 100vh;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: 
+                radial-gradient(circle at 20% 20%, rgba(114, 99, 243, 0.15) 0%, transparent 40%),
+                radial-gradient(circle at 80% 80%, rgba(110, 84, 231, 0.15) 0%, transparent 40%);
+            z-index: -1;
+        }
+
+        .glass-card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(var(--blur-amount));
+            -webkit-backdrop-filter: blur(var(--blur-amount));
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.36);
         }
 
         header {
-            background-color: var(--surface-2);
-            padding: 2rem 1rem;
+            padding: 3rem 1rem;
             text-align: center;
-            box-shadow: var(--elevation-1);
+            position: relative;
+            overflow: hidden;
         }
 
         .logo {
-            width: 100px;
-            height: 100px;
+            width: 120px;
+            height: 120px;
             margin-bottom: 1.5rem;
-            transition: transform 0.3s ease;
+            transition: transform 0.5s ease;
+            filter: drop-shadow(0 0 10px rgba(114, 99, 243, 0.3));
         }
 
         .logo:hover {
-            transform: scale(1.05);
+            transform: scale(1.1) rotate(5deg);
         }
 
         h1 {
-            font-size: 2.5rem;
+            font-size: 3.5rem;
             font-weight: 700;
-            color: var(--primary-color);
+            background: var(--primary-gradient);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
             margin-bottom: 0.5rem;
-            letter-spacing: -0.5px;
+            letter-spacing: -1px;
         }
 
         .subtitle {
             color: var(--text-secondary);
-            font-size: 1.1rem;
-            margin-bottom: 1rem;
+            font-size: 1.2rem;
+            margin-bottom: 1.5rem;
+            font-weight: 300;
         }
 
         .version-badge {
             display: inline-block;
-            padding: 0.4rem 1rem;
-            background-color: var(--surface-3);
-            border-radius: 20px;
-            font-size: 0.875rem;
-            color: var(--primary-light);
-            border: 1px solid var(--primary-color);
+            padding: 0.5rem 1.5rem;
+            background: var(--glass-bg);
+            border-radius: 30px;
+            font-size: 0.9rem;
+            color: var(--text-primary);
+            border: 1px solid var(--glass-border);
+            backdrop-filter: blur(var(--blur-amount));
+            transition: all 0.3s ease;
+        }
+
+        .version-badge:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(114, 99, 243, 0.2);
         }
 
         main {
             max-width: 1200px;
             margin: 0 auto;
-            padding: 2rem 1rem;
+            padding: 2rem;
         }
 
         .quick-start-container {
-            background-color: var(--surface-2);
-            border-radius: 12px;
-            padding: 2rem;
+            padding: 3rem;
             margin: 2rem 0;
-            box-shadow: var(--elevation-2);
             text-align: center;
-            border: 1px solid var(--border-color);
-        }
-
-        .quick-start-container h2 {
-            font-size: 2rem;
-            color: var(--primary-color);
-            margin-bottom: 1.5rem;
-            font-weight: 500;
-        }
-
-        .launch-button {
-            background-color: var(--primary-color);
-            color: white;
-            border: none;
-            padding: 0.75rem 2rem;
-            border-radius: 8px;
-            font-size: 1rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: var(--elevation-1);
-        }
-
-        .launch-button:hover {
-            background-color: var(--primary-light);
-            box-shadow: var(--elevation-2);
-            transform: translateY(-2px);
         }
 
         .overview-text {
-            background-color: var(--surface-3);
-            padding: 1.5rem;
-            border-radius: 8px;
+            background: var(--glass-bg);
+            padding: 2rem;
+            border-radius: 15px;
             margin: 2rem 0;
+            line-height: 1.8;
             color: var(--text-secondary);
-            font-size: 1rem;
-            line-height: 1.6;
-            border: 1px solid var(--border-color);
+            backdrop-filter: blur(var(--blur-amount));
+            border: 1px solid var(--glass-border);
+        }
+
+        .launch-button {
+            background: var(--primary-gradient);
+            color: white;
+            border: none;
+            padding: 1rem 2.5rem;
+            border-radius: 30px;
+            font-size: 1.1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+            box-shadow: 0 5px 15px rgba(114, 99, 243, 0.3);
+        }
+
+        .launch-button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(114, 99, 243, 0.4);
         }
 
         .feature-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 1.5rem;
-            margin-top: 3rem;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-top: 4rem;
         }
 
         .feature-card {
-            background-color: var(--surface-2);
-            padding: 1.5rem;
-            border-radius: 12px;
-            box-shadow: var(--elevation-1);
-            transition: all 0.3s ease;
-            border: 1px solid var(--border-color);
+            padding: 2rem;
+            text-align: center;
+            transition: all 0.4s ease;
         }
 
         .feature-card:hover {
-            transform: translateY(-5px);
-            box-shadow: var(--elevation-3);
-            border-color: var(--primary-color);
+            transform: translateY(-10px);
         }
 
         .feature-icon {
-            font-size: 2rem;
-            margin-bottom: 1rem;
-            color: var(--primary-color);
+            font-size: 2.5rem;
+            margin-bottom: 1.5rem;
+            background: var(--primary-gradient);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
         }
 
         .feature-title {
-            font-size: 1.25rem;
-            font-weight: 500;
-            margin-bottom: 0.75rem;
+            font-size: 1.4rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
             color: var(--text-primary);
         }
 
         .feature-description {
             color: var(--text-secondary);
-            font-size: 0.95rem;
-            line-height: 1.6;
+            font-size: 1rem;
+            line-height: 1.7;
         }
 
         footer {
-            background-color: var(--surface-2);
-            padding: 2rem 1rem;
+            margin-top: 4rem;
+            padding: 2rem;
             text-align: center;
-            margin-top: 3rem;
-            border-top: 1px solid var(--border-color);
+            background: var(--glass-bg);
+            backdrop-filter: blur(var(--blur-amount));
         }
 
         footer p {
+            margin-bottom: 1.5rem;
             color: var(--text-secondary);
-            margin-bottom: 1rem;
         }
 
         @media (max-width: 768px) {
             h1 {
-                font-size: 2rem;
+                font-size: 2.5rem;
             }
             
             .quick-start-container {
-                padding: 1.5rem;
+                padding: 2rem;
             }
             
             .feature-grid {
                 grid-template-columns: 1fr;
             }
-            
-            .overview-text {
-                font-size: 0.95rem;
-            }
         }
 
-        @media (min-width: 769px) {
-            main {
-                padding: 3rem 2rem;
-            }
+        html {
+            scroll-behavior: smooth;
+        }
+
+        ::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--primary-color);
+            border-radius: 5px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #5b4cd6;
         }
     </style>
 </head>
 <body>
-    <header>
+    <header class="glass-card">
         <div class="logo-container">
             <img src="https://raw.githubusercontent.com/Mofi-l/static-images/main/Aura.png" alt="Aura Logo" class="logo">
         </div>
@@ -222,7 +252,7 @@
     </header>
 
     <main>
-        <section class="quick-start-container">
+        <section class="quick-start-container glass-card">
             <h2>Quick Start</h2>
             <button onclick="launchAuraTool()" class="launch-button">
                 Launch Aura Tool
@@ -239,8 +269,10 @@
         </section>
 
         <section class="feature-grid">
-            <div class="feature-card">
-                <div class="feature-icon">📋</div>
+            <div class="feature-card glass-card">
+                <div class="feature-icon">
+                    <i class="fas fa-clipboard-list"></i>
+                </div>
                 <h3 class="feature-title">Project Details Card</h3>
                 <p class="feature-description">
                     A replacement to existing project details quip which facilitates daily project
@@ -249,8 +281,10 @@
                 </p>
             </div>
 
-            <div class="feature-card">
-                <div class="feature-icon">📊</div>
+            <div class="feature-card glass-card">
+                <div class="feature-icon">
+                    <i class="fas fa-chart-line"></i>
+                </div>
                 <h3 class="feature-title">NPT Tracker</h3>
                 <p class="feature-description">
                     Enables seamless NPT management with robust import/export capabilities across CSV
@@ -258,8 +292,10 @@
                 </p>
             </div>
 
-            <div class="feature-card">
-                <div class="feature-icon">🗄️</div>
+            <div class="feature-card glass-card">
+                <div class="feature-icon">
+                    <i class="fas fa-database"></i>
+                </div>
                 <h3 class="feature-title">Database Manager</h3>
                 <p class="feature-description">
                     Features search functionality with AWS integration for efficient project time
@@ -267,8 +303,10 @@
                 </p>
             </div>
 
-            <div class="feature-card">
-                <div class="feature-icon">📈</div>
+            <div class="feature-card glass-card">
+                <div class="feature-icon">
+                    <i class="fas fa-tachometer-alt"></i>
+                </div>
                 <h3 class="feature-title">Flash Data Dashboard</h3>
                 <p class="feature-description">
                     Delivers real-time microsite metrics through an intuitive visual interface,
@@ -276,8 +314,10 @@
                 </p>
             </div>
 
-            <div class="feature-card">
-                <div class="feature-icon">⚡</div>
+            <div class="feature-card glass-card">
+                <div class="feature-icon">
+                    <i class="fas fa-bolt"></i>
+                </div>
                 <h3 class="feature-title">Efficiency Tracker</h3>
                 <p class="feature-description">
                     Provides real-time AUX monitoring through an interactive dashboard, helping
@@ -288,7 +328,7 @@
     </main>
 
     <footer>
-        <p>Created by ******@ • Last Updated: July 2025</p>
+        <p>Created by mofila@ • Last Updated: July 2025</p>
         <a href="https://amazon.enterprise.slack.com/archives/C0941UXQ7DJ" 
            class="launch-button" 
            target="_blank" 
