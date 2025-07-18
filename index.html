@@ -8,51 +8,59 @@
     <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@400;500&display=swap" rel="stylesheet">
     <style>
         :root {
-            --primary-color: #1a73e8;
-            --secondary-color: #5f6368;
-            --background-color: #ffffff;
-            --surface-color: #f8f9fa;
-            --card-bg: #ffffff;
-            --text-primary: #202124;
-            --text-secondary: #5f6368;
-            --border-color: #dadce0;
-            --shadow-1: 0 1px 2px 0 rgba(60, 64, 67, 0.3),
-                        0 1px 3px 1px rgba(60, 64, 67, 0.15);
-            --shadow-2: 0 2px 6px 2px rgba(60, 64, 67, 0.15);
+            --primary-color: #6c5ce7;
+            --primary-light: #8c7ff0;
+            --primary-dark: #4c3cc7;
+            --surface-1: #1e1e1e;
+            --surface-2: #2d2d2d;
+            --surface-3: #333333;
+            --text-primary: #ffffff;
+            --text-secondary: rgba(255, 255, 255, 0.7);
+            --text-disabled: rgba(255, 255, 255, 0.5);
+            --border-color: rgba(255, 255, 255, 0.12);
+            --elevation-1: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
+            --elevation-2: 0 3px 6px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.12);
+            --elevation-3: 0 10px 20px rgba(0, 0, 0, 0.15), 0 3px 6px rgba(0, 0, 0, 0.1);
         }
 
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'Google Sans', 'Roboto', sans-serif;
         }
 
         body {
-            background: var(--background-color);
+            background-color: var(--surface-1);
             color: var(--text-primary);
+            font-family: 'Google Sans', 'Roboto', sans-serif;
             line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
         }
 
-        /* Header Styles */
         header {
-            background: var(--surface-color);
-            padding: 2rem;
+            background-color: var(--surface-2);
+            padding: 2rem 1rem;
             text-align: center;
-            border-bottom: 1px solid var(--border-color);
+            box-shadow: var(--elevation-1);
         }
 
         .logo {
-            width: 80px;
-            height: 80px;
-            margin-bottom: 1rem;
+            width: 100px;
+            height: 100px;
+            margin-bottom: 1.5rem;
+            transition: transform 0.3s ease;
+        }
+
+        .logo:hover {
+            transform: scale(1.05);
         }
 
         h1 {
             font-size: 2.5rem;
-            font-weight: 500;
+            font-weight: 700;
             color: var(--primary-color);
             margin-bottom: 0.5rem;
+            letter-spacing: -0.5px;
         }
 
         .subtitle {
@@ -61,57 +69,89 @@
             margin-bottom: 1rem;
         }
 
-        /* Main Content Styles */
+        .version-badge {
+            display: inline-block;
+            padding: 0.4rem 1rem;
+            background-color: var(--surface-3);
+            border-radius: 20px;
+            font-size: 0.875rem;
+            color: var(--primary-light);
+            border: 1px solid var(--primary-color);
+        }
+
         main {
             max-width: 1200px;
             margin: 0 auto;
-            padding: 2rem;
+            padding: 2rem 1rem;
         }
 
         .quick-start-container {
-            background: var(--card-bg);
-            border-radius: 8px;
+            background-color: var(--surface-2);
+            border-radius: 12px;
             padding: 2rem;
             margin: 2rem 0;
-            box-shadow: var(--shadow-1);
+            box-shadow: var(--elevation-2);
             text-align: center;
+            border: 1px solid var(--border-color);
+        }
+
+        .quick-start-container h2 {
+            font-size: 2rem;
+            color: var(--primary-color);
+            margin-bottom: 1.5rem;
+            font-weight: 500;
         }
 
         .launch-button {
-            background: var(--primary-color);
+            background-color: var(--primary-color);
             color: white;
             border: none;
-            padding: 0.75rem 1.5rem;
-            border-radius: 4px;
+            padding: 0.75rem 2rem;
+            border-radius: 8px;
+            font-size: 1rem;
             font-weight: 500;
-            font-size: 0.875rem;
             cursor: pointer;
-            transition: background-color 0.2s;
+            transition: all 0.3s ease;
+            box-shadow: var(--elevation-1);
         }
 
         .launch-button:hover {
-            background: #1557c0;
-            box-shadow: var(--shadow-2);
+            background-color: var(--primary-light);
+            box-shadow: var(--elevation-2);
+            transform: translateY(-2px);
         }
 
-        /* Feature Grid */
+        .overview-text {
+            background-color: var(--surface-3);
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin: 2rem 0;
+            color: var(--text-secondary);
+            font-size: 1rem;
+            line-height: 1.6;
+            border: 1px solid var(--border-color);
+        }
+
         .feature-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
             gap: 1.5rem;
-            margin-top: 2rem;
+            margin-top: 3rem;
         }
 
         .feature-card {
-            background: var(--card-bg);
+            background-color: var(--surface-2);
             padding: 1.5rem;
-            border-radius: 8px;
-            box-shadow: var(--shadow-1);
-            transition: box-shadow 0.2s;
+            border-radius: 12px;
+            box-shadow: var(--elevation-1);
+            transition: all 0.3s ease;
+            border: 1px solid var(--border-color);
         }
 
         .feature-card:hover {
-            box-shadow: var(--shadow-2);
+            transform: translateY(-5px);
+            box-shadow: var(--elevation-3);
+            border-color: var(--primary-color);
         }
 
         .feature-icon {
@@ -121,55 +161,52 @@
         }
 
         .feature-title {
-            font-size: 1.125rem;
+            font-size: 1.25rem;
             font-weight: 500;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.75rem;
             color: var(--text-primary);
         }
 
         .feature-description {
             color: var(--text-secondary);
-            font-size: 0.875rem;
-        }
-
-        .version-badge {
-            display: inline-block;
-            padding: 0.25rem 0.75rem;
-            background: var(--surface-color);
-            border: 1px solid var(--border-color);
-            border-radius: 16px;
-            font-size: 0.875rem;
-            color: var(--text-secondary);
-        }
-
-        /* Overview Text */
-        .overview-text {
-            background: var(--surface-color);
-            padding: 1.5rem;
-            border-radius: 8px;
-            margin: 1.5rem 0;
-            color: var(--text-secondary);
-            font-size: 0.875rem;
+            font-size: 0.95rem;
             line-height: 1.6;
         }
 
-        /* Footer */
         footer {
-            background: var(--surface-color);
-            padding: 2rem;
+            background-color: var(--surface-2);
+            padding: 2rem 1rem;
             text-align: center;
+            margin-top: 3rem;
             border-top: 1px solid var(--border-color);
+        }
+
+        footer p {
             color: var(--text-secondary);
-            font-size: 0.875rem;
+            margin-bottom: 1rem;
         }
 
         @media (max-width: 768px) {
-            main {
-                padding: 1rem;
+            h1 {
+                font-size: 2rem;
+            }
+            
+            .quick-start-container {
+                padding: 1.5rem;
             }
             
             .feature-grid {
                 grid-template-columns: 1fr;
+            }
+            
+            .overview-text {
+                font-size: 0.95rem;
+            }
+        }
+
+        @media (min-width: 769px) {
+            main {
+                padding: 3rem 2rem;
             }
         }
     </style>
@@ -186,9 +223,7 @@
 
     <main>
         <section class="quick-start-container">
-            <h2 style="color: var(--text-primary); font-size: 1.5rem; font-weight: 500; margin-bottom: 1.5rem;">
-                Quick Start
-            </h2>
+            <h2>Quick Start</h2>
             <button onclick="launchAuraTool()" class="launch-button">
                 Launch Aura Tool
             </button>
@@ -201,7 +236,7 @@
                 and advanced data handling features, AURA empowers Microsite productivity, and maintain precise
                 control over microsite hours utilization.
             </div>
-        </se/section>
+        </section>
 
         <section class="feature-grid">
             <div class="feature-card">
@@ -253,12 +288,11 @@
     </main>
 
     <footer>
-        <p style="margin-bottom: 1rem;">Created by ******@ • Last Updated: July 2025</p>
+        <p>Created by ******@ • Last Updated: July 2025</p>
         <a href="https://amazon.enterprise.slack.com/archives/C0941UXQ7DJ" 
            class="launch-button" 
            target="_blank" 
-           rel="noopener noreferrer"
-           style="text-decoration: none; display: inline-block;">
+           rel="noopener noreferrer">
             Report Issues
         </a>
     </footer>
