@@ -5,380 +5,172 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Aura</title>
     <link rel="icon" href="https://raw.githubusercontent.com/Mofi-l/static-images/main/Aura.png" type="image/png">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@400;500&display=swap" rel="stylesheet">
     <style>
         :root {
-            --primary-color: #6c5ce7;
-            --secondary-color: #a393f5;
-            --background-color: #0a0a0a;
-            --card-bg: #1a1a1a;
-            --card-bg-hover: #242424;
-            --text-color: #ffffff;
-            --text-secondary: #a0aec0;
-            --border-color: rgba(255, 255, 255, 0.1);
-            --gradient-start: #6c5ce7;
-            --gradient-end: #a393f5;
-            --success-color: #48bb78;
-            --warning-color: #ed8936;
-            --error-color: #f56565;
+            --primary-color: #1a73e8;
+            --secondary-color: #5f6368;
+            --background-color: #ffffff;
+            --surface-color: #f8f9fa;
+            --card-bg: #ffffff;
+            --text-primary: #202124;
+            --text-secondary: #5f6368;
+            --border-color: #dadce0;
+            --shadow-1: 0 1px 2px 0 rgba(60, 64, 67, 0.3),
+                        0 1px 3px 1px rgba(60, 64, 67, 0.15);
+            --shadow-2: 0 2px 6px 2px rgba(60, 64, 67, 0.15);
         }
 
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: 'Google Sans', 'Roboto', sans-serif;
         }
 
         body {
             background: var(--background-color);
-            color: var(--text-color);
-            line-height: 1.6;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
+            color: var(--text-primary);
+            line-height: 1.5;
         }
 
         /* Header Styles */
         header {
-            background: linear-gradient(145deg, #1a1a1a, #2d2d2d);
-            padding: 3rem 2rem;
+            background: var(--surface-color);
+            padding: 2rem;
             text-align: center;
             border-bottom: 1px solid var(--border-color);
-            position: relative;
-            overflow: hidden;
-        }
-
-        header::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: radial-gradient(circle at center, rgba(108, 92, 231, 0.1) 0%, transparent 70%);
-            pointer-events: none;
-        }
-
-        .logo-container {
-            position: relative;
-            display: inline-block;
-            margin-bottom: 2rem;
         }
 
         .logo {
-            width: 140px;
-            height: 140px;
-            animation: float 6s ease-in-out infinite;
-            filter: drop-shadow(0 0 20px rgba(108, 92, 231, 0.3));
-        }
-
-        @keyframes float {
-            0%, 100% { transform: translateY(0) rotate(0deg); }
-            50% { transform: translateY(-10px) rotate(5deg); }
+            width: 80px;
+            height: 80px;
+            margin-bottom: 1rem;
         }
 
         h1 {
-            font-size: 3rem;
-            font-weight: 700;
-            margin-bottom: 1rem;
-            background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            position: relative;
+            font-size: 2.5rem;
+            font-weight: 500;
+            color: var(--primary-color);
+            margin-bottom: 0.5rem;
         }
 
         .subtitle {
             color: var(--text-secondary);
-            font-size: 1.2rem;
-            margin-bottom: 1.5rem;
+            font-size: 1.1rem;
+            margin-bottom: 1rem;
         }
 
         /* Main Content Styles */
         main {
-            flex: 1;
-            padding: 3rem 2rem;
             max-width: 1200px;
             margin: 0 auto;
-            width: 100%;
+            padding: 2rem;
         }
 
-.quick-start-container {
-    text-align: center;
-    padding: 3rem;
-    background: linear-gradient(145deg, rgba(108, 92, 231, 0.1), rgba(163, 147, 245, 0.1));
-    border-radius: 16px;
-    margin: 2rem 0;
-    border: 1px solid rgba(108, 92, 231, 0.2);
-    position: relative;
-    overflow: hidden;
-}
-
-.quick-start-container h2 {
-    font-size: 2rem;
-    font-weight: 700;
-    margin-bottom: 1.5rem;
-    background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    text-align: center;
-}
-
-
-        .quick-start-container::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: radial-gradient(circle at center, rgba(108, 92, 231, 0.1) 0%, transparent 70%);
-            pointer-events: none;
+        .quick-start-container {
+            background: var(--card-bg);
+            border-radius: 8px;
+            padding: 2rem;
+            margin: 2rem 0;
+            box-shadow: var(--shadow-1);
+            text-align: center;
         }
 
         .launch-button {
-            display: inline-block;
-            padding: 1rem 2rem;
-            font-size: 1.1rem;
-            font-weight: 600;
+            background: var(--primary-color);
             color: white;
-            background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
             border: none;
-            border-radius: 12px;
+            padding: 0.75rem 1.5rem;
+            border-radius: 4px;
+            font-weight: 500;
+            font-size: 0.875rem;
             cursor: pointer;
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .launch-button::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(rgba(255, 255, 255, 0.1), transparent);
-            transform: translateY(-100%);
-            transition: transform 0.3s ease;
+            transition: background-color 0.2s;
         }
 
         .launch-button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(108, 92, 231, 0.4);
+            background: #1557c0;
+            box-shadow: var(--shadow-2);
         }
 
-        .launch-button:hover::before {
-            transform: translateY(0);
-        }
-
-        /* Feature Grid Styles */
+        /* Feature Grid */
         .feature-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 2rem;
-            margin-top: 3rem;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-top: 2rem;
         }
 
         .feature-card {
             background: var(--card-bg);
-            padding: 2rem;
-            border-radius: 16px;
-            border: 1px solid var(--border-color);
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .feature-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: linear-gradient(45deg, transparent, rgba(108, 92, 231, 0.1), transparent);
-            transform: translateX(-100%);
-            transition: transform 0.6s ease;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: var(--shadow-1);
+            transition: box-shadow 0.2s;
         }
 
         .feature-card:hover {
-            transform: translateY(-5px);
-            background: var(--card-bg-hover);
-            border-color: var(--primary-color);
-        }
-
-        .feature-card:hover::before {
-            transform: translateX(100%);
+            box-shadow: var(--shadow-2);
         }
 
         .feature-icon {
-            font-size: 2.5rem;
-            margin-bottom: 1.5rem;
+            font-size: 2rem;
+            margin-bottom: 1rem;
             color: var(--primary-color);
         }
 
         .feature-title {
-            font-size: 1.3rem;
-            font-weight: 600;
-            margin-bottom: 1rem;
-            color: var(--text-color);
+            font-size: 1.125rem;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
         }
 
         .feature-description {
             color: var(--text-secondary);
-            font-size: 0.95rem;
+            font-size: 0.875rem;
+        }
+
+        .version-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            background: var(--surface-color);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        /* Overview Text */
+        .overview-text {
+            background: var(--surface-color);
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin: 1.5rem 0;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
             line-height: 1.6;
         }
 
-            /* Modal Styles */
-        .modal {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.85);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-            backdrop-filter: blur(8px);
-            animation: modalFadeIn 0.3s ease;
-        }
-
-        .modal-content {
-            background: var(--card-bg);
-            padding: 2.5rem;
-            border-radius: 20px;
-            max-width: 500px;
-            width: 90%;
-            color: var(--text-color);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            border: 1px solid var(--border-color);
-            animation: modalSlideIn 0.3s ease;
-        }
-
-        @keyframes modalFadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-
-        @keyframes modalSlideIn {
-            from { transform: translateY(20px); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
-        }
-
-        .modal select {
-            width: 100%;
-            padding: 1rem;
-            background: #2d2d2d;
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            color: var(--text-color);
-            margin: 1.5rem 0;
-            font-size: 1rem;
-            cursor: pointer;
-            appearance: none;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
-            background-repeat: no-repeat;
-            background-position: right 1rem center;
-            background-size: 1em;
-        }
-
-        .modal select:focus {
-            outline: none;
-            border-color: var(--primary-color);
-            box-shadow: 0 0 0 2px rgba(108, 92, 231, 0.2);
-        }
-
-        .modal-buttons {
-            display: flex;
-            gap: 1rem;
-            justify-content: flex-end;
-            margin-top: 2rem;
-        }
-
-        .modal-button {
-            padding: 0.75rem 1.5rem;
-            border: none;
-            border-radius: 8px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .modal-button.primary {
-            background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
-            color: white;
-        }
-
-        .modal-button.secondary {
-            background: #444;
-            color: white;
-        }
-
-        .modal-button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-        }
-
-/* Overview Section Styles */
-.overview-text {
-    color: var(--text-secondary);
-    font-size: 1.1rem;
-    line-height: 1.8;
-    max-width: 900px;
-    margin: 1.5rem auto;
-    text-align: left;
-    padding: 1rem;
-    background: rgba(108, 92, 231, 0.05);
-    border-radius: 12px;
-    border: 1px solid rgba(108, 92, 231, 0.1);
-}
-
-        /* Version Badge */
-        .version-badge {
-            display: inline-block;
-            padding: 0.5rem 1rem;
-            background: rgba(108, 92, 231, 0.1);
-            border-radius: 20px;
-            color: var(--primary-color);
-            font-size: 0.9rem;
-            margin-top: 1rem;
-        }
-
-        /* Footer Styles */
+        /* Footer */
         footer {
-            text-align: center;
+            background: var(--surface-color);
             padding: 2rem;
-            background: var(--card-bg);
+            text-align: center;
             border-top: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            font-size: 0.875rem;
         }
 
-        /* Responsive Design */
         @media (max-width: 768px) {
-            header { padding: 2rem 1rem; }
-            .logo { width: 100px; height: 100px; }
-            h1 { font-size: 2rem; }
-            main { padding: 1.5rem; }
-            .feature-grid { grid-template-columns: 1fr; }
-            .quick-start-container { padding: 1.5rem; }
-    .overview-text {
-        font-size: 1rem;
-        padding: 0.8rem;
-        margin: 1rem auto;
-    }
-    
-    .quick-start-container {
-        padding: 1.5rem;
-    }
-    
-    .quick-start-container h2 {
-        font-size: 1.75rem;
-    }
+            main {
+                padding: 1rem;
+            }
+            
+            .feature-grid {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
@@ -394,81 +186,87 @@
 
     <main>
         <section class="quick-start-container">
-            <h2>Quick Start</h2>
+            <h2 style="color: var(--text-primary); font-size: 1.5rem; font-weight: 500; margin-bottom: 1.5rem;">
+                Quick Start
+            </h2>
             <button onclick="launchAuraTool()" class="launch-button">
                 Launch Aura Tool
             </button>
 
-    <p class="overview-text">
-        The AURA (Automated Utility & Resource Assistant) is an all-in-one productivity tool designed to
-        streamline microsite operations through automation and comprehensive project management
-        capabilities. With a suite of integrated modules, AURA enables seamless data management, real-time
-        monitoring, efficient project updates, and intuitive AUX tracking. Equipped with secure authentication,
-        and advanced data handling features, AURA empowers Microsite productivity, and maintain precise
-        control over microsite hours utilization.
-    </p>
-        </section>
+            <div class="overview-text">
+                The AURA (Automated Utility & Resource Assistant) is an all-in-one productivity tool designed to
+                streamline microsite operations through automation and comprehensive project management
+                capabilities. With a suite of integrated modules, AURA enables seamless data management, real-time
+                monitoring, efficient project updates, and intuitive AUX tracking. Equipped with secure authentication,
+                and advanced data handling features, AURA empowers Microsite productivity, and maintain precise
+                control over microsite hours utilization.
+            </div>
+        </se/section>
 
         <section class="feature-grid">
-    <div class="feature-card">
-        <div class="feature-icon">📋</div>
-        <h3 class="feature-title">Project Details Card</h3>
-        <p class="feature-description">
-            A replacement to existing project details quip which facilitates daily project
-            updates and retrievals through a streamlined interface, ensuring project documentation 
-            stays visible for the team.
-        </p>
-    </div>
+            <div class="feature-card">
+                <div class="feature-icon">📋</div>
+                <h3 class="feature-title">Project Details Card</h3>
+                <p class="feature-description">
+                    A replacement to existing project details quip which facilitates daily project
+                    updates and retrievals through a streamlined interface, ensuring project documentation 
+                    stays visible for the team.
+                </p>
+            </div>
 
-    <div class="feature-card">
-        <div class="feature-icon">📊</div>
-        <h3 class="feature-title">NPT Tracker</h3>
-        <p class="feature-description">
-            Enables seamless NPT management with robust import/export capabilities across CSV
-            and AWS platforms, providing complete control over AUX data handling.
-        </p>
-    </div>
+            <div class="feature-card">
+                <div class="feature-icon">📊</div>
+                <h3 class="feature-title">NPT Tracker</h3>
+                <p class="feature-description">
+                    Enables seamless NPT management with robust import/export capabilities across CSV
+                    and AWS platforms, providing complete control over AUX data handling.
+                </p>
+            </div>
 
-    <div class="feature-card">
-        <div class="feature-icon">🗄️</div>
-        <h3 class="feature-title">Database Manager</h3>
-        <p class="feature-description">
-            Features search functionality with AWS integration for efficient project time
-            tracking and comprehensive NPT data retrieval.
-        </p>
-    </div>
+            <div class="feature-card">
+                <div class="feature-icon">🗄️</div>
+                <h3 class="feature-title">Database Manager</h3>
+                <p class="feature-description">
+                    Features search functionality with AWS integration for efficient project time
+                    tracking and comprehensive NPT data retrieval.
+                </p>
+            </div>
 
-    <div class="feature-card">
-        <div class="feature-icon">📈</div>
-        <h3 class="feature-title">Flash Data Dashboard</h3>
-        <p class="feature-description">
-            Delivers real-time microsite metrics through an intuitive visual interface,
-            enabling instant data monitoring.
-        </p>
-    </div>
+            <div class="feature-card">
+                <div class="feature-icon">📈</div>
+                <h3 class="feature-title">Flash Data Dashboard</h3>
+                <p class="feature-description">
+                    Delivers real-time microsite metrics through an intuitive visual interface,
+                    enabling instant data monitoring.
+                </p>
+            </div>
 
-    <div class="feature-card">
-        <div class="feature-icon">⚡</div>
-        <h3 class="feature-title">Efficiency Tracker</h3>
-        <p class="feature-description">
-            Provides real-time AUX monitoring through an interactive dashboard, helping
-            optimize resource utilization and effective reporting.
-        </p>
-    </div>
+            <div class="feature-card">
+                <div class="feature-icon">⚡</div>
+                <h3 class="feature-title">Efficiency Tracker</h3>
+                <p class="feature-description">
+                    Provides real-time AUX monitoring through an interactive dashboard, helping
+                    optimize resource utilization and effective reporting.
+                </p>
+            </div>
         </section>
     </main>
 
     <footer>
-        <p>Created by mofila@ • Last Updated: July 2025</p>
-        <a href="https://amazon.enterprise.slack.com/archives/C0941UXQ7DJ" class="launch-button" target="_blank" rel="noopener noreferrer">
+        <p style="margin-bottom: 1rem;">Created by ******@ • Last Updated: July 2025</p>
+        <a href="https://amazon.enterprise.slack.com/archives/C0941UXQ7DJ" 
+           class="launch-button" 
+           target="_blank" 
+           rel="noopener noreferrer"
+           style="text-decoration: none; display: inline-block;">
             Report Issues
         </a>
     </footer>
 
     <script>
-function launchAuraTool() {
-    window.open('https://mofi-l.github.io/aura-tool/Aura.html', '_blank');
-}
+        function launchAuraTool() {
+            window.open('https://mofi-l.github.io/aura-tool/Aura.html', '_blank');
+        }
     </script>
 </body>
 </html>
