@@ -944,7 +944,7 @@ async function initializeScript() {
             if (credentials) {
                 saveAuthCredentials(credentials.username, credentials.password);
                 if (shouldShowProjectForm()) {
-                    showProjectDetailsForm();
+                   //  showProjectDetailsForm();
                     localStorage.setItem('lastProjectFormShow', today);
                 }
             }
@@ -953,7 +953,7 @@ async function initializeScript() {
             return;
         }
     } else if (shouldShowProjectForm()) {
-        showProjectDetailsForm();
+       //  showProjectDetailsForm();
         localStorage.setItem('lastProjectFormShow', today);
     }
 
