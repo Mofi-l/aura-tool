@@ -5383,6 +5383,7 @@ const styles = `
             <h2 class="dashboard-title">Real-time AUX Dashboard</h2>
             <div class="dashboard-controls">
                 <button class="dashboard-button refresh-btn" title="Refresh Data">↻</button>
+                <button class="dashboard-button download-btn" title="Download CSV">⬇️</button>
                 <button class="dashboard-button close-btn">×</button>
             </div>
         </div>
@@ -5431,6 +5432,22 @@ const styles = `
         }, 1000);
     };
 
+    const downloadBtn = dashboard.querySelector('.download-btn');
+    downloadBtn.onclick = () => {
+        const csvContent = generateCSV(lastUpdates);
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        if (link.download !== undefined) {
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', 'aux_dashboard_data.csv');
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    };
+
     closeBtn.onclick = () => {
         stopDashboardUpdates();
         dashboard.remove();
@@ -5449,6 +5466,22 @@ const styles = `
             dashboard.remove();
         }
     });
+}
+
+function generateCSV(updates) {
+    const headers = ['Date', 'Username', 'Login Time', 'Paused Time', 'Logout Time', 'Total Time'];
+    const rows = updates.map(update => {
+        const date = new Date(update.loginTime).toLocaleDateString();
+        const loginTime = new Date(update.loginTime).toLocaleTimeString();
+        const logoutTime = update.logoutTime ? new Date(update.logoutTime).toLocaleTimeString() : 'Active';
+        const pausedTime = formatTime(update.totalPauseDuration || 0);
+        const totalTime = formatTime(
+            (update.logoutTime ? new Date(update.logoutTime) : new Date()) - new Date(update.loginTime) - (update.totalPauseDuration || 0)
+        );
+        return [date, update.username, loginTime, pausedTime, logoutTime, totalTime];
+    });
+    
+    return [headers, ...rows].map(row => row.join(',')).join('\n');
 }
 
 // Part 3: Data Fetching and Dashboard Updates
@@ -5659,6 +5692,8 @@ window.addEventListener('auxStateChange', (event) => {
     }
 });
 
+let lastUpdates = [];
+
 async function updateDashboardData(isImmediateUpdate = false) {
     try {
         console.log('Updating dashboard data...', isImmediateUpdate ? '(Immediate update)' : '');
@@ -5768,6 +5803,9 @@ async function updateDashboardData(isImmediateUpdate = false) {
             });
 
         console.log('Processed updates:', validUpdates.length);
+
+        // Store the latest updates for CSV download
+        lastUpdates = validUpdates;
 
         // Update UI with the processed data
         updateDashboardUI(validUpdates);
