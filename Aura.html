@@ -5040,21 +5040,18 @@ async function updateAWSCredentials(token) {
 
 // Helper function to calculate user status
 function calculateUserStatus(lastUpdateTime, auxLabel, isPaused) {
+    // Handle offline or undefined cases
+    if (!auxLabel || auxLabel.toLowerCase() === 'offline' || auxLabel.toLowerCase() === 'undefined') {
+        return 'inactive';
+    }
+
     // Handle paused state
     if (isPaused) {
         return 'paused';
     }
 
-    // Convert auxLabel to lowercase if it exists, or use empty string if undefined
-    const label = (auxLabel || '').toLowerCase();
-
-    // Handle offline or undefined state
-    if (!auxLabel || label === 'offline' || label === 'undefined') {
-        return 'inactive';
-    }
-
     // Handle break state
-    if (label.includes('on break')) {
+    if (auxLabel.toLowerCase().includes('on break')) {
         return 'away';
     }
 
