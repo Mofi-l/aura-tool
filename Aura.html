@@ -5040,23 +5040,21 @@ async function updateAWSCredentials(token) {
 
 // Helper function to calculate user status
 function calculateUserStatus(lastUpdateTime, auxLabel, isPaused) {
-    // First check for paused state
-    if (isPaused) {
-        return 'paused';
-    }
+console.log('Calculating status:', { lastUpdateTime, auxLabel, isPaused }); // Add this log
+if (isPaused) {
+return 'paused';
+}
 
-    // Check for offline/undefined state
-    if (!auxLabel || auxLabel.toLowerCase().includes('offline') || auxLabel.toLowerCase().includes('undefined')) {
-        return 'inactive';
-    }
+if (auxLabel && auxLabel.toLowerCase().includes('offline', 'undefined')) {
+    return 'inactive';
+}
 
-    // Check for break state
-    if (auxLabel.toLowerCase().includes('on break')) {
-        return 'away';
-    }
+if (auxLabel && auxLabel.toLowerCase().includes('on break')) {
+    return 'away';
+}
 
-    // Default to active
-    return 'active';
+return auxLabel ? 'active' : 'inactive';
+
 }
 
 // Helper function to format time display
