@@ -5045,7 +5045,11 @@ if (isPaused) {
 return 'paused';
 }
 
-if (auxLabel && auxLabel.toLowerCase().includes('offline', 'undefined')) {
+if (auxLabel && auxLabel.toLowerCase().includes('offline')) {
+    return 'inactive';
+}
+
+if (auxLabel && auxLabel.toLowerCase().includes('undefined')) {
     return 'inactive';
 }
 
