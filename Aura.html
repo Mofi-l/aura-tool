@@ -5760,7 +5760,7 @@ async function updateDashboardData(isImmediateUpdate = false) {
                 const updateDate = new Date(lastUpdateTime).setHours(0, 0, 0, 0);
                 const timeSinceUpdate = currentTime - lastUpdateTime;
 
-                if (updateDate === today) {
+              //  if (updateDate === today) {
                     return {
                         ...userState,
                         fileKey: item.Key,
@@ -5773,7 +5773,7 @@ async function updateDashboardData(isImmediateUpdate = false) {
                             userState.isPaused
                         )
                     };
-                   }
+               //    }
                 return null;
             } catch (error) {
                 console.error(`Error processing file ${item.Key}:`, error);
