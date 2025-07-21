@@ -4888,188 +4888,15 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('flashDataButton').addEventListener('click', flashData);
 });
 ///////////////////////////////////////////////////////////////
-//Real Time Efficiency Functionality
-// Constants and Configuration
-const CONFIG = {
-    AWS_REGION: 'eu-north-*',
-    IDENTITY_POOL_ID: 'eu-north-1:98c07095-e731-4219-bebe-db4dab892ea8',
-    USER_POOL_ID: 'eu-north-1_V9kLPNVXl',
-    BUCKET_NAME: 'real-time-databucket',
-    UPDATE_INTERVAL: 30000,
-    RETRY_ATTEMPTS: 3,
-    BASE_RETRY_DELAY: 1000
-};
-
-// State Management Class
-class DashboardState {
-    constructor() {
-        this.updates = [];
-        this.filter = 'all';
-        this.searchTerm = '';
-        this.isUpdating = false;
-        this.listeners = new Set();
-    }
-
-    addListener(listener) {
-        this.listeners.add(listener);
-    }
-
-    removeListener(listener) {
-        this.listeners.delete(listener);
-    }
-
-    notifyListeners() {
-        this.listeners.forEach(listener => listener(this.getFilteredUpdates()));
-    }
-
-    setUpdates(updates) {
-        this.updates = updates.filter(validateUpdate);
-        this.notifyListeners();
-    }
-
-    setFilter(filter) {
-        this.filter = filter;
-        this.notifyListeners();
-    }
-
-    setSearchTerm(term) {
-        this.searchTerm = term;
-        this.notifyListeners();
-    }
-
-    getFilteredUpdates() {
-        return this.updates.filter(update => {
-            const matchesSearch = update.usernername.toLowerCase()
-                .includes(this.searchTerm.toLowerCase());
-            const matchesFilter = this.filter === 'all' || 
-                                update.status === this.filter;
-            return matchesSearch && matchesFilter;
-        });
-    }
-}
-
-// Initialize global state
-const dashboardState = new DashboardState();
-
-// Authentication and Token Management
-class AuthManager {
-    static async refreshToken() {
-        try {
-            const credentials = AWS.config.credentials;
-            if (credentials && credentials.needsRefresh()) {
-                await new Promise((resolve, reject) => {
-                    credentials.refresh(err => {
-                        if (err) reject(err);
-                        else resolve();
-                    });
-                });
-            }
-            return true;
-        } catch (error) {
-            console.error('Token refresh failed:', error);
-            return false;
-        }
-    }
-
-    static async ensureValidToken() {
-        const isRefreshed = await this.refreshToken();
-        if (!isRefreshed) {
-            localStorage.removeItem('lastAuthUsername');
-            localStorage.removeItem('lastAuthPassword');
-            const credentials = await SharedFunctions.showAuthModal();
-            if (!credentials) throw new Error('Authentication cancelled');
-            return await this.authenticate(credentials.username, credentials.password);
-        }
-        return AWS.config.credentials;
-    }
-
-    static async authenticate(username, password) {
-        try {
-            const token = await SharedFunctions.authenticateUser(username, password);
-            await this.updateAWSCredentials(token);
-            return token;
-        } catch (error) {
-            console.error('Authentication failed:', error);
-            throw error;
-        }
-    }
-
-    static async updateAWSCredentials(token) {
-        AWS.config.update({
-            region: CONFIG.AWS_REGION,
-            credentials: new AWS.CognitoIdentityCredentials({
-                IdentityPoolId: CONFIG.IDENTITY_POOL_ID,
-                Logins: {
-                    [`cognito-idp.${CONFIG.AWS_REGION}.amazonaws.com/${CONFIG.USER_POOL_ID}`]: token
-                }
-            })
-        });
-
-        return new Promise((resolve, reject) => {
-            AWS.config.credentials.get(err => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-    }
-}
-
-// Utility Functions
-function validateUpdate(update) {
-    const required = ['username', 'auxLabel', 'lastUpdate'];
-    const isValid = required.every(field => {
-        const value = update[field];
-        return value !== undefined && value !== null && value !== '';
-    });
-
-    if (!isValid) {
-        console.warn('Invalid update data:', update);
-        return false;
-    }
-
-    try {
-        new Date(update.lastUpdate);
-        return true;
-    } catch {
-        console.warn('Invalid date in update:', update);
-        return false;
-    }
-}
-
-function throttle(func, limit) {
-    let inThrottle;
-    return function(...args) {
-        if (!inThrottle) {
-            func.apply(this, args);
-            inThrottle = true;
-            setTimeout(() => inThrottle = false, limit);
-        }
-    }
-}
-
-async function withRetry(operation, maxRetries = CONFIG.RETRY_ATTEMPTS) {
-    let lastError;
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-            return await operation();
-        } catch (error) {
-            lastError = error;
-            if (attempt === maxRetries - 1) break;
-            
-            const delay = CONFIG.BASE_RETRY_DELAY * Math.pow(2, attempt);
-            console.log(`Retry attempt ${attempt + 1} failed, waiting ${delay}ms`);
-            await new Promise(resolve => setTimeout(resolve, delay));
-        }
-    }
-    throw lastError;
-}
-
-// Time Management Functions
+// Dashboard functionality
+// Part 1: Core Dashboard Setup and Initialization
+// Dashboard click handler
 function setInitialLoginTime() {
     const today = new Date().toISOString().split('T')[0];
     const storedDate = localStorage.getItem('lastLoginDate');
 
     if (storedDate !== today) {
+        // New day - clear previous login time
         localStorage.removeItem('dailyLoginTime');
         localStorage.setItem('lastLoginDate', today);
     }
@@ -5079,6 +4906,157 @@ function setInitialLoginTime() {
     }
 }
 
+function setLogoutTime(auxLabel) {
+    const today = new Date().toISOString().split('T')[0];
+    const storedDate = localStorage.getItem('lastLogoutDate');
+
+    if (storedDate !== today) {
+        // New day - clear previous logout time
+        localStorage.removeItem('dailyLogoutTime');
+    }
+
+    if (auxLabel.toLowerCase().includes('offline') && !localStorage.getItem('dailyLogoutTime')) {
+        localStorage.setItem('dailyLogoutTime', new Date().toISOString());
+        localStorage.setItem('lastLogoutDate', today);
+    }
+}
+
+function clearDailyTimes() {
+    const today = new Date().toISOString().split('T')[0];
+    const lastDate = localStorage.getItem('lastActiveDate');
+
+    if (lastDate !== today) {
+        localStorage.removeItem('firstAuxUpdateTime');
+        localStorage.removeItem('offlineTime');
+        localStorage.setItem('lastActiveDate', today);
+    }
+}
+
+document.getElementById('dashboardButton').addEventListener('click', async () => {
+    try {
+        await SharedFunctions.loadCognitoSDK();
+        await showDashboard();
+    } catch (error) {
+        console.error('Dashboard access error:', error);
+        SharedFunctions.showCustomAlert('Failed to load dashboard. Please try again.');
+    }
+});
+
+async function showDashboard() {
+    try {
+        const storedUsername = localStorage.getItem('lastAuthUsername');
+        const storedPassword = localStorage.getItem('lastAuthPassword');
+        let token;
+
+        if (!storedUsername || !storedPassword) {
+            const credentials = await SharedFunctions.showAuthModal();
+            if (credentials) {
+                token = await authenticate(credentials.username, credentials.password);
+                localStorage.setItem('lastAuthUsername', credentials.username);
+                localStorage.setItem('lastAuthPassword', credentials.password);
+            }
+        } else {
+            try {
+                token = await authenticate(storedUsername, storedPassword);
+            } catch (error) {
+                localStorage.removeItem('lastAuthUsername');
+                localStorage.removeItem('lastAuthPassword');
+                const credentials = await SharedFunctions.showAuthModal();
+                if (credentials) {
+                    token = await authenticate(credentials.username, credentials.password);
+                    localStorage.setItem('lastAuthUsername', credentials.username);
+                    localStorage.setItem('lastAuthPassword', credentials.password);
+                }
+            }
+        }
+
+        if (token) {
+            initializeDashboard();
+        }
+
+    } catch (error) {
+        console.error('Dashboard initialization error:', error);
+        SharedFunctions.showCustomAlert('Failed to initialize dashboard');
+    }
+}
+
+let dashboardUpdateInterval;
+let dashboardAnimationFrame;
+
+async function startDashboardUpdates() {
+    try {
+        await updateDashboardData(true); // Initial update
+
+        // Use requestAnimationFrame for smooth updates
+        function updateLoop() {
+            if (document.getElementById('aux-dashboard')) {
+                updateDashboardTimers();
+                requestAnimationFrame(updateLoop);
+            }
+        }
+
+        requestAnimationFrame(updateLoop);
+
+        // Keep the interval for data refresh, but not for timer updates
+        dashboardUpdateInterval = setInterval(() => updateDashboardData(false), 30000);
+
+    } catch (error) {
+        console.error('Failed to start dashboard updates:', error);
+        SharedFunctions.showCustomAlert('Failed to initialize dashboard updates');
+    }
+}
+
+function stopDashboardUpdates() {
+    if (dashboardAnimationFrame) {
+        cancelAnimationFrame(dashboardAnimationFrame);
+        dashboardAnimationFrame = null;
+    }
+    if (dashboardUpdateInterval) {
+        clearInterval(dashboardUpdateInterval);
+        dashboardUpdateInterval = null;
+    }
+}
+
+// Helper function to update AWS credentials
+async function updateAWSCredentials(token) {
+    AWS.config.update({
+        region: 'eu-north-1',
+        credentials: new AWS.CognitoIdentityCredentials({
+            IdentityPoolId: 'eu-north-1:98c07095-e731-4219-bebe-db4dab892ea8',
+            Logins: {
+                'cognito-idp.eu-north-1.amazonaws.com/eu-north-1_V9kLPNVXl': token
+            }
+        })
+    });
+
+    // Wait for credentials to be refreshed
+    return new Promise((resolve, reject) => {
+        AWS.config.credentials.get(err => {
+            if (err) reject(err);
+            else resolve();
+        });
+    });
+}
+
+// Helper function to calculate user status
+function calculateUserStatus(lastUpdateTime, auxLabel, isPaused) {
+    console.log('Calculating status:', { lastUpdateTime, auxLabel, isPaused }); // Add this log
+    if (isPaused) {
+        return 'paused';
+    }
+
+    if (auxLabel && auxLabel.toLowerCase().includes('offline', 'undefined')) {
+        return 'inactive';
+    }
+
+    if (auxLabel && auxLabel.toLowerCase().includes('on break')) {
+        return 'away';
+    }
+
+    return auxLabel ? 'active' : 'inactive';
+}
+
+// Helper function to format time display
 function formatTime(ms) {
     const totalSeconds = Math.floor(ms / 1000);
     const hours = Math.floor(totalSeconds / 3600);
@@ -5087,74 +5065,18 @@ function formatTime(ms) {
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 }
 
-// Dashboard Initialization and Management
-class DashboardManager {
-    constructor() {
-        this.updateInterval = null;
-        this.animationFrame = null;
-        this.eventListeners = new Map();
+// Part 2: Dashboard UI Initialization and Styling
+function initializeDashboard() {
+    let dashboard = document.getElementById('aux-dashboard');
+    if (dashboard) {
+        stopDashboardUpdates();
+        dashboard.remove();
+        return;
     }
 
-    async initialize() {
-        try {
-            await SharedFunctions.loadCognitoSDK();
-            await this.showDashboard();
-        } catch (error) {
-            console.error('Dashboard initialization error:', error);
-            SharedFunctions.showCustomAlert('Failed to initialize dashboard');
-        }
-    }
-
-    async showDashboard() {
-        try {
-            const token = await this.getValidToken();
-            if (token) {
-                this.initializeDashboardUI();
-                this.startUpdates();
-            }
-        } catch (error) {
-            console.error('Show dashboard error:', error);
-            SharedFunctions.showCustomAlert('Failed to show dashboard');
-        }
-    }
-
-    async getValidToken() {
-        const storedUsername = localStorage.getItem('lastAuthUsername');
-        const storedPassword = localStorage.getItem('lastAuthPassword');
-
-        try {
-            if (storedUsername && storedPassword) {
-                return await AuthManager.authenticate(storedUsername, storedPassword);
-            }
-            const credentials = await SharedFunctions.showAuthModal();
-            if (credentials) {
-                const token = await AuthManager.authenticate(credentials.username, credentials.password);
-                localStorage.setItem('lastAuthUsername', credentials.username);
-                localStorage.setItem('lastAuthPassword', credentials.password);
-                return token;
-            }
-        } catch (error) {
-            localStorage.removeItem('lastAuthUsername');
-            localStorage.removeItem('lastAuthPassword');
-            throw error;
-        }
-    }
-
-    initializeDashboardUI() {
-        let dashboard = document.getElementById('aux-dashboard');
-        if (dashboard) {
-            this.cleanup();
-            return;
-        }
-
-        dashboard = this.createDashboardElement();
-        document.body.appendChild(dashboard);
-        this.setupEventListeners();
-    }
-
-    createDashboardElement() {
-        const dashboard = document.createElement('div');
-        dashboard.id = 'aux-dashboard';
+    // Create dashboard container
+    dashboard = document.createElement('div');
+    dashboard.id = 'aux-dashboard';
 
 // Add dashboard styles
 const styles = `
@@ -5454,454 +5376,821 @@ const styles = `
     const styleSheet = document.createElement('style');
     styleSheet.textContent = styles;
     document.head.appendChild(styleSheet);
-        dashboard.innerHTML = `
-            <div class="dashboard-header">
-                <h2 class="dashboard-title">Real-time AUX Dashboard</h2>
-                <div class="dashboard-controls">
-                    <button class="dashboard-button refresh-btn" title="Refresh Data">↻</button>
-                    <button class="dashboard-button download-btn" title="Download CSV">⬇️</button>
-                    <button class="dashboard-button close-btn">×</button>
-                </div>
+
+    // Create dashboard structure
+    dashboard.innerHTML = `
+        <div class="dashboard-header">
+            <h2 class="dashboard-title">Real-time AUX Dashboard</h2>
+            <div class="dashboard-controls">
+                <button class="dashboard-button refresh-btn" title="Refresh Data">↻</button>
+                <button class="dashboard-button download-btn" title="Download CSV">⬇️</button>
+                <button class="dashboard-button close-btn">×</button>
             </div>
-            <div class="search-container">
-                <input type="text" class="search-input" placeholder="Search by username...">
-                <select class="status-filter">
-                    <option value="all">All Status</option>
-                    <option value="active">Active</option>
-                    <option value="away">Away</option>
-                    <option value="inactive">Inactive</option>
-                    <option value="paused">Paused</option>
-                </select>
-            </div>
-            <div class="dashboard-content">
-                <table class="dashboard-table">
-                    <thead>
-                        <tr>
-                            <th>Username</th>
-                            <th>Current AUX</th>
-                            <th>Time</th>
-                            <th>Status</th>
-                            <th>Last Update</th>
-                            <th>Total Pause Time</th>
-                            <th>Login Time</th>
-                            <th>Logout Time</th>
-                        </tr>
-                    </thead>
-                    <tbody id="dashboard-data"></tbody>
-                </table>
-            </div>
-        `;
-        return dashboard;
-    }
+        </div>
+        <div class="search-container">
+            <input type="text" class="search-input" placeholder="Search by username...">
+            <select class="status-filter">
+                <option value="all">All Status</option>
+                <option value="active">Active</option>
+                <option value="away">Away</option>
+                <option value="inactive">Inactive</option>
+                <option value="paused">Paused</option>
+            </select>
+        </div>
+        <div class="dashboard-content">
+            <table class="dashboard-table">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Current AUX</th>
+                        <th>Time</th>
+                        <th>Status</th>
+                        <th>Last Update</th>
+                        <th>Total Pause Time</th>
+                        <th>Login Time</th>
+                        <th>Logout Time</th>
+                    </tr>
+                </thead>
+                <tbody id="dashboard-data"></tbody>
+            </table>
+        </div>
+    `;
 
-    setupEventListeners() {
-        const dashboard = document.getElementById('aux-dashboard');
-        
-        // Refresh button
-        this.addListener(
-            dashboard.querySelector('.refresh-btn'),
-            'click',
-            async () => {
-                const btn = dashboard.querySelector('.refresh-btn');
-                btn.style.transform = 'rotate(360deg)';
-                await this.refreshDashboard();
-                setTimeout(() => btn.style.transform = 'rotate(0deg)', 1000);
-            }
-        );
+    document.body.appendChild(dashboard);
 
-        // Download button
-        this.addListener(
-            dashboard.querySelector('.download-btn'),
-            'click',
-            () => this.downloadData()
-        );
+    // Add event listeners
+    const refreshBtn = dashboard.querySelector('.refresh-btn');
+    const closeBtn = dashboard.querySelector('.close-btn');
+    const searchInput = dashboard.querySelector('.search-input');
+    const statusFilter = dashboard.querySelector('.status-filter');
 
-        // Close button
-        this.addListener(
-            dashboard.querySelector('.close-btn'),
-            'click',
-            () => this.cleanup()
-        );
+    refreshBtn.onclick = () => {
+        refreshBtn.style.transform = 'rotate(360deg)';
+        updateDashboardData(true);
+        setTimeout(() => {
+            refreshBtn.style.transform = 'rotate(0deg)';
+        }, 1000);
+    };
 
-        // Search and filter
-        this.addListener(
-            dashboard.querySelector('.search-input'),
-            'input',
-            (e) => dashboardState.setSearchTerm(e.target.value)
-        );
-
-        this.addListener(
-            dashboard.querySelector('.status-filter'),
-            'change',
-            (e) => dashboardState.setFilter(e.target.value)
-        );
-
-        // Escape key handler
-        this.addListener(
-            document,
-            'keydown',
-            (e) => {
-                if (e.key === 'Escape' && document.getElementById('aux-dashboard')) {
-                    this.cleanup();
-                }
-            }
-        );
-    }
-
-    addListener(element, event, handler) {
-        element.addEventListener(event, handler);
-        this.eventListeners.set(handler, { element, event });
-    }
-
-    async startUpdates() {
-        try {
-            await this.refreshDashboard();
-            this.startUpdateLoop();
-        } catch (error) {
-            console.error('Failed to start updates:', error);
-            SharedFunctions.showCustomAlert('Failed to start dashboard updates');
+    const downloadBtn = dashboard.querySelector('.download-btn');
+    downloadBtn.onclick = () => {
+        const csvContent = generateCSV(lastUpdates);
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        if (link.download !== undefined) {
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', 'aux_dashboard_data.csv');
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
         }
-    }
+    };
 
-    startUpdateLoop() {
-        const updateTimers = () => {
-            if (document.getElementById('aux-dashboard')) {
-                this.updateDashboardTimers();
-                this.animationFrame = requestAnimationFrame(updateTimers);
-            }
-        };
+    closeBtn.onclick = () => {
+        stopDashboardUpdates();
+        dashboard.remove();
+    };
 
-        this.animationFrame = requestAnimationFrame(updateTimers);
-        this.updateInterval = setInterval(() => this.refreshDashboard(), CONFIG.UPDATE_INTERVAL);
-    }
+    searchInput.addEventListener('input', () => filterDashboard());
+    statusFilter.addEventListener('change', () => filterDashboard());
 
-    cleanup() {
-        if (this.animationFrame) {
-            cancelAnimationFrame(this.animationFrame);
-            this.animationFrame = null;
-        }
-        if (this.updateInterval) {
-            clearInterval(this.updateInterval);
-            this.updateInterval = null;
-        }
-        
-        this.eventListeners.forEach((config, handler) => {
-            config.element.removeEventListener(config.event, handler);
-        });
-        this.eventListeners.clear();
+    // Start updates
+    startDashboardUpdates();
 
-        const dashboard = document.getElementById('aux-dashboard');
-        if (dashboard) {
+    // Add escape key listener
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape' && document.getElementById('aux-dashboard')) {
+            stopDashboardUpdates();
             dashboard.remove();
         }
-    }
+    });
 }
 
-// Data Management and Updates
-class DataManager {
-    static async fetchUpdates() {
-        try {
-            const s3 = new AWS.S3();
-            const response = await s3.listObjectsV2({
-                Bucket: CONFIG.BUCKET_NAME,
-                Prefix: 'aux-realtime/',
-                MaxKeys: 1000
-            }).promise();
+function generateCSV(updates) {
+    const headers = ['Date', 'Username', 'Login Time', 'Paused Time', 'Logout Time', 'Total Time'];
+    const rows = updates.map(update => {
+        const date = new Date(update.loginTime).toLocaleDateString();
+        const loginTime = new Date(update.loginTime).toLocaleTimeString();
+        const logoutTime = update.logoutTime ? new Date(update.logoutTime).toLocaleTimeString() : 'Active';
+        const pausedTime = formatTime(update.totalPauseDuration || 0);
+        const totalTime = formatTime(
+            (update.logoutTime ? new Date(update.logoutTime) : new Date()) - new Date(update.loginTime) - (update.totalPauseDuration || 0)
+        );
+        return [date, update.username, loginTime, pausedTime, logoutTime, totalTime];
+    });
+    
+    return [headers, ...rows].map(row => row.join(',')).join('\n');
+}
 
-            const updates = await Promise.all(
-                response.Contents.map(item => this.fetchUserData(s3, item.Key))
-            );
-
-            return updates.filter(update => update !== null);
-        } catch (error) {
-            console.error('Error fetching updates:', error);
-            throw error;
+// Part 3: Data Fetching and Dashboard Updates
+async function sendAuxUpdate() {
+    try {
+        const currentState = JSON.parse(localStorage.getItem('auxState'));
+        console.log('Attempting to send AUX update:', currentState);
+        if (!currentState) {
+            console.log('No current AUX state to send');
+            return;
         }
-    }
 
-    static async fetchUserData(s3, key) {
-        try {
-            const data = await s3.getObject({
-                Bucket: CONFIG.BUCKET_NAME,
-                Key: key
-            }).promise();
+        let username = localStorage.getItem('lastAuthUsername');
+        let password = localStorage.getItem('lastAuthPassword');
 
-            const userState = JSON.parse(data.Body.toString());
-            if (!validateUpdate(userState))e)) return null;
-
-            return this.processUserState(userState, key);
-        } catch (error) {
-            console.error(`Error fetching data for ${key}:`, error);
-            return null;
+        if (!username || !password) {
+            console.log('No stored credentials, requesting authentication...');
+            const credentials = await SharedFunctions.showAuthModal();
+            if (!credentials) {
+                throw new Error('Authentication cancelled');
+            }
+            username = credentials.username;
+            password = credentials.password;
+            localStorage.setItem('lastAuthUsername', username);
+            localStorage.setItem('lastAuthPassword', password);
         }
-    }
 
-    static processUserState(userState, fileKey) {
-        const currentTime = Date.now();
-        const lastUpdateTime = new Date(userState.lastUpdate).getTime();
+        console.log('Authenticating with AWS...');
+        const token = await authenticate(username, password);
 
-        return {
-            ...userState,
-            fileKey,
-            lastModified: new Date(userState.lastUpdate),
-            timeSinceUpdate: currentTime - lastUpdateTime,
-            isPaused: Boolean(userState.isPaused),
-            totalPauseDuration: parseInt(userState.totalPauseDuration) || 0,
-            loginTime: userState.loginTime ? new Date(userState.loginTime).toISOString() : null,
-            logoutTime: userState.logoutTime ? new Date(userState.logoutTime).toISOString() : null,
-            status: this.calculateUserStatus(
-                lastUpdateTime,
-                userState.auxLabel || '',
-                Boolean(userState.isPaused)
-            )
-        };
-    }
+        // Configure AWS
+        AWS.config.update({
+            region: 'eu-north-1',
+            credentials: new AWS.CognitoIdentityCredentials({
+                IdentityPoolId: 'eu-north-1:98c07095-e731-4219-bebe-db4dab892ea8',
+                Logins: {
+                    'cognito-idp.eu-north-1.amazonaws.com/eu-north-1_V9kLPNVXl': token
+                }
+            })
+        });
 
-    static calculateUserStatus(lastUpdateTime, auxLabel, isPaused) {
-        if (isPaused) return 'paused';
-        if (!auxLabel) return 'inactive';
+        // Wait for credentials to refresh
+        await new Promise((resolve, reject) => {
+            AWS.config.credentials.get(err => {
+                if (err) {
+                    console.error('Error getting AWS credentials:', err);
+                    reject(err);
+                } else {
+                    console.log('AWS credentials successfully obtained');
+                    resolve();
+                }
+            });
+        });
 
-        const timeSinceUpdate = Date.now() - lastUpdateTime;
-        if (timeSinceUpdate > 5 * 60 * 1000) return 'inactive';
-        if (auxLabel.toLowerCase().includes('on break')) return 'away';
-        return 'active';
-    }
-
-    static async sendUpdate(updateData) {
         const s3 = new AWS.S3();
-        const username = localStorage.getItem('lastAuthUsername');
 
-        const data = {
-            ...updateData,
-            username,
-            lastUpdate: new Date().toISOString(),
-            status: this.calculateUserStatus(
-                Date.now(),
-                updateData.auxLabel,
-                updateData.isPaused
-            )
-        };
+        // Prepare the data object with explicit pause state information
+const data = {
+    username: username,
+    auxLabel: currentState.auxLabel,
+    startTime: currentState.startTime,
+    lastUpdate: new Date().toISOString(),
+    isPaused: currentState.isPaused || false,
+    pauseTime: currentState.pauseTime || null,
+    totalPauseDuration: currentState.totalPauseDuration || 0,
+    // Modify login time handling
+    loginTime: localStorage.getItem('firstAuxUpdateTime') || (() => {
+        const time = new Date().toISOString();
+        localStorage.setItem('firstAuxUpdateTime', time);
+        return time;
+    })(),
+    // Modify logout time handling
+    logoutTime: currentState.auxLabel.toLowerCase().includes('offline') ?
+        localStorage.getItem('offlineTime') || (() => {
+            const time = new Date().toISOString();
+            localStorage.setItem('offlineTime', time);
+            return time;
+        })() : null,
+    lastAuxUpdate: new Date().toISOString(),
+    status: calculateUserStatus(
+        new Date().getTime(),
+        currentState.auxLabel,
+        currentState.isPaused
+    )
+};
 
+        // Set logoutTime if user is going offline
+        if (currentState.auxLabel.toLowerCase().includes('offline') ||
+            currentState.auxLabel.toLowerCase().includes('undefined')) {
+            data.logoutTime = new Date().toISOString();
+        }
+
+        console.log('Sending data to S3:', data);
+
+        // Send data to S3
         await s3.putObject({
-            Bucket: CONFIG.BUCKET_NAME,
+            Bucket: 'real-time-databucket',
             Key: `aux-realtime/${username}.json`,
             Body: JSON.stringify(data),
             ContentType: 'application/json'
         }).promise();
 
-        return data;
+        console.log('Successfully sent data to S3:', data);
+
+        // Update local storage with the latest state
+        localStorage.setItem('auxState', JSON.stringify({
+            ...currentState,
+            lastUpdate: data.lastUpdate,
+            status: data.status
+        }));
+
+        // Broadcast the update
+        const updateEvent = new CustomEvent('auxStateUpdate', {
+            detail: {
+                type: 'update',
+                data: data
+            }
+        });
+        window.dispatchEvent(updateEvent);
+
+        // Trigger immediate dashboard update if dashboard is open
+        if (document.getElementById('aux-dashboard')) {
+            await updateDashboardData(true);
+        }
+
+        return data; // Return the data for any subsequent operations
+
+    } catch (error) {
+        console.error('Error sending AUX update:', error);
+        if (error.code === 'CredentialsError' || error.message.includes('NetworkingError')) {
+            try {
+                await sendAuxUpdateWithRetry(3);
+            } catch (retryError) {
+                console.error('All retries failed:', retryError);
+                localStorage.removeItem('lastAuthUsername');
+                localStorage.removeItem('lastAuthPassword');
+                throw new Error('Failed to send AUX update after multiple attempts');
+            }
+        } else {
+            throw error;
+        }
     }
 }
 
-// UI Rendering
-class DashboardRenderer {
-    static updateDashboardUI(updates) {
-        const tbody = document.getElementById('dashboard-data');
-        if (!tbody) return;
+// Add event listener for AUX state updates
+window.addEventListener('auxStateUpdate', (event) => {
+    const { type, data } = event.detail;
+    if (type === 'update') {
+        // Update any UI elements that depend on AUX state
+        const pauseButton = document.getElementById('pause-button');
+        if (pauseButton) {
+            pauseButton.textContent = data.isPaused ? 'Resume' : 'Pause';
+            pauseButton.style.backgroundColor = data.isPaused ? '#FFA500' : '#4CAF50';
+        }
 
-        tbody.innerHTML = '';
-        const currentUsername = localStorage.getItem('lastAuthUsername');
+        // Update timer display
+        const timerElement = document.getElementById('aux-timer');
+        if (timerElement) {
+            timerElement.style.opacity = data.isPaused ? '0.5' : '1';
+        }
 
-        updates.forEach(update => this.renderUserRow(tbody, update, currentUsername));
+        // Update status indicator if it exists
+        const statusIndicator = document.querySelector('.status-indicator');
+        if (statusIndicator) {
+            statusIndicator.style.backgroundColor = data.isPaused ? '#FFA500' : '#4CAF50';
+        }
+    }
+});
+
+// Helper function to calculate pause duration
+function calculatePauseDuration(state) {
+    if (!state.pauseTime) return 0;
+    return new Date().getTime() - new Date(state.pauseTime).getTime();
+}
+
+// Helper function to broadcast state changes
+function broadcastStateChange(data) {
+    const event = new CustomEvent('auxStateChange', {
+        detail: {
+            ...data,
+            timestamp: new Date().toISOString()
+        }
+    });
+    window.dispatchEvent(event);
+}
+
+// Add event listener for state changes
+window.addEventListener('auxStateChange', (event) => {
+    const data = event.detail;
+
+    // Update pause button if exists
+    const pauseButton = document.getElementById('pause-button');
+    if (pauseButton) {
+        pauseButton.textContent = data.isPaused ? 'Resume' : 'Pause';
+        pauseButton.style.backgroundColor = data.isPaused ? '#FFA500' : '#4CAF50';
     }
 
-    static renderUserRow(tbody, update, currentUsername) {
+    // Update status indicator if exists
+    const statusIndicator = document.querySelector('.pause-status-indicator');
+    if (statusIndicator) {
+        statusIndicator.style.backgroundColor = data.isPaused ? '#FFA500' : '#4CAF50';
+        statusIndicator.style.boxShadow = `0 0 5px ${data.isPaused ? '#FFA500' : '#4CAF50'}`;
+    }
+
+    // Update dashboard if open
+    if (document.getElementById('aux-dashboard')) {
+        updateDashboardData(true);
+    }
+});
+
+let lastUpdates = [];
+
+async function updateDashboardData(isImmediateUpdate = false) {
+    try {
+        console.log('Updating dashboard data...', isImmediateUpdate ? '(Immediate update)' : '');
+
+        // First, ensure AWS SDK is loaded
+        await SharedFunctions.loadAwsSdk();
+
+        // Check and refresh credentials if needed
+        let token;
+        try {
+            token = await refreshCredentials();
+        } catch (credError) {
+            console.log('Credential refresh failed, requesting new authentication');
+            const credentials = await SharedFunctions.showAuthModal();
+            if (!credentials) throw new Error('Authentication cancelled');
+
+            token = await authenticate(credentials.username, credentials.password);
+            localStorage.setItem('lastAuthUsername', credentials.username);
+            localStorage.setItem('lastAuthPassword', credentials.password);
+        }
+
+        // Configure AWS with the token
+        AWS.config.update({
+            region: 'eu-north-1',
+            credentials: new AWS.CognitoIdentityCredentials({
+                IdentityPoolId: 'eu-north-1:98c07095-e731-4219-bebe-db4dab892ea8',
+                Logins: {
+                    'cognito-idp.eu-north-1.amazonaws.com/eu-north-1_V9kLPNVXl': token
+                }
+            })
+        });
+
+        // Wait for credentials to be initialized
+        await new Promise((resolve, reject) => {
+            AWS.config.credentials.get(err => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        const s3 = new AWS.S3();
+        const response = await s3.listObjectsV2({
+            Bucket: 'real-time-databucket',
+            Prefix: 'aux-realtime/',
+            MaxKeys: 1000
+        }).promise();
+
+        console.log(`Found ${response.Contents.length} AUX updates`);
+
+        const currentTime = Date.now();
+        const today = new Date().setHours(0, 0, 0, 0);
+        const currentUsername = localStorage.getItem('lastAuthUsername');
+
+        // Process all updates first
+        const updates = await Promise.all(response.Contents.map(async (item) => {
+            try {
+                const data = await s3.getObject({
+                    Bucket: 'real-time-databucket',
+                    Key: item.Key
+                }).promise();
+
+                const userState = JSON.parse(data.Body.toString());
+                const lastUpdateTime = new Date(userState.lastUpdate).getTime();
+                const updateDate = new Date(lastUpdateTime).setHours(0, 0, 0, 0);
+                const timeSinceUpdate = currentTime - lastUpdateTime;
+
+                if (updateDate === today) {
+                    return {
+                        ...userState,
+                        fileKey: item.Key,
+                        lastModified: item.LastModified,
+                        timeSinceUpdate,
+                        isPaused: userState.isPaused || false,
+                        status: calculateUserStatus(
+                            lastUpdateTime,
+                            userState.auxLabel,
+                            userState.isPaused
+                        )
+                    };
+                   }
+                return null;
+            } catch (error) {
+                console.error(`Error processing file ${item.Key}:`, error);
+                return null;
+            }
+        }));
+
+        // Filter out nulls and sort updates
+        const validUpdates = updates
+            .filter(update => update !== null)
+            .map(update => {
+                console.log('Processing update:', update);
+                const status = calculateUserStatus(
+                    new Date(update.lastUpdate).getTime(),
+                    update.auxLabel,
+                    update.isPaused
+                );
+                return {
+                    ...update,
+                    status
+                };
+            })
+            .sort((a, b) => {
+                if (a.username === currentUsername) return -1;
+                if (b.username === currentUsername) return 1;
+                return new Date(b.lastUpdate) - new Date(a.lastUpdate);
+            });
+
+        console.log('Processed updates:', validUpdates.length);
+
+        // Store the latest updates for CSV download
+        lastUpdates = validUpdates;
+
+        // Update UI with the processed data
+        updateDashboardUI(validUpdates);
+
+        // Add continuous timer updates
+        function updateDashboardTimers() {
+            const timerCells = document.querySelectorAll('.dashboard-table td:nth-child(3)');
+            timerCells.forEach(cell => {
+                const row = cell.parentElement;
+                const username = row.getAttribute('data-username');
+                const auxState = JSON.parse(localStorage.getItem('auxState')) || {};
+
+                if (auxState && !auxState.isPaused && auxState.username === username) {
+                    const startTime = auxState.startTime;
+                    const totalPauseDuration = auxState.totalPauseDuration || 0;
+                    const elapsedTime = Date.now() - startTime - totalPauseDuration;
+                    cell.textContent = formatTime(elapsedTime);
+                }
+            });
+
+            // Continue the animation frame if the dashboard is still open
+            if (document.getElementById('aux-dashboard')) {
+                dashboardAnimationFrame = requestAnimationFrame(updateDashboardTimers);
+            }
+        }
+
+        // Start the continuous timer updates
+        if (document.getElementById('aux-dashboard')) {
+            if (dashboardAnimationFrame) {
+                cancelAnimationFrame(dashboardAnimationFrame);
+            }
+            dashboardAnimationFrame = requestAnimationFrame(updateDashboardTimers);
+        }
+
+    } catch (error) {
+        console.error('Error updating dashboard:', error);
+        handleUpdateError(error);
+    }
+}
+
+
+// Error handling function
+function handleUpdateError(error) {
+    if (error.code === 'CredentialsError' ||
+        error.message.includes('credentials') ||
+        error.message.includes('Authentication')) {
+
+        console.log('Credentials error, requesting re-authentication...');
+        localStorage.removeItem('lastAuthUsername');
+        localStorage.removeItem('lastAuthPassword');
+        stopDashboardUpdates();
+
+        // Show authentication modal on next update
+        setTimeout(async () => {
+            try {
+                const credentials = await SharedFunctions.showAuthModal();
+                if (credentials) {
+                    const token = await authenticate(credentials.username, credentials.password);
+                    localStorage.setItem('lastAuthUsername', credentials.username);
+                    localStorage.setItem('lastAuthPassword', credentials.password);
+                    startDashboardUpdates();
+                }
+            } catch (authError) {
+                console.error('Re-authentication failed:', authError);
+                SharedFunctions.showCustomAlert('Authentication failed. Please try again.');
+            }
+        }, 0);
+    } else {
+        SharedFunctions.showCustomAlert('Error updating dashboard: ' + error.message);
+    }
+}
+
+// Add event listeners for online/offline status
+window.addEventListener('online', () => {
+    console.log('Connection restored, restarting dashboard updates...');
+    if (document.getElementById('aux-dashboard')) {
+        startDashboardUpdates();
+    }
+});
+
+window.addEventListener('offline', () => {
+    console.log('Connection lost, stopping dashboard updates...');
+    stopDashboardUpdates();
+    if (document.getElementById('aux-dashboard')) {
+        SharedFunctions.showCustomAlert('Connection lost. Dashboard updates paused.');
+    }
+});
+
+// Error boundaries
+window.addEventListener('unhandledrejection', event => {
+    console.error('Unhandled promise rejection:', event.reason);
+    if (event.reason.code === 'CredentialsError') {
+        handleUpdateError(event.reason);
+    }
+});
+
+async function sendAuxUpdateWithRetry(maxRetries = 3, baseDelay = 1000) {
+    let attempt = 0;
+    while (attempt < maxRetries) {
+        try {
+            await sendAuxUpdate();
+            console.log('AUX update sent successfully on attempt', attempt + 1);
+            return;
+        } catch (error) {
+            attempt++;
+            if (attempt === maxRetries) throw error;
+            const delay = baseDelay * Math.pow(2, attempt);
+            console.log(`Retry attempt ${attempt} failed, waiting ${delay}ms before next attempt`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+    }
+}
+
+function startAuxUpdates() {
+    sendAuxUpdate();
+    return setInterval(() => {
+        sendAuxUpdate();
+    }, 10000);
+}
+
+let currentFilter = 'all';
+let currentSearchTerm = '';
+
+function updateDashboardUI(updates) {
+    const tbody = document.getElementById('dashboard-data');
+    if (!tbody) {
+        console.error('Dashboard table body not found');
+        return;
+    }
+
+    // Clear existing timers
+    if (window.dashboardTimers) {
+        window.dashboardTimers.forEach(timer => clearInterval(timer));
+    }
+    window.dashboardTimers = [];
+
+    // Clear existing content
+    tbody.innerHTML = '';
+
+    // Add pause pulse animation
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes pausePulse {
+            0% { background-color: rgba(255, 165, 0, 0.05); }
+            50% { background-color: rgba(255, 165, 0, 0.1); }
+            100% { background-color: rgba(255, 165, 0, 0.05); }
+        }
+    `;
+    document.head.appendChild(style);
+
+    const currentUsername = localStorage.getItem("currentUsername");
+
+    updates.forEach((update, index) => {
         const row = tbody.insertRow();
         const isCurrentUser = update.username === currentUsername;
 
-        row.setAttribute('data-username', update.username);
-        row.setAttribute('data-status', update.status);
-
+        // Add highlighting for current user
         if (isCurrentUser) {
-            this.applyCurrentUserStyles(row);
+            row.style.backgroundColor = 'rgba(108, 92, 231, 0.1)';
+            row.style.borderLeft = '3px solid #6c5ce7';
         }
 
-        if (update.isPaused) {
-            this.applyPausedStyles(row);
+        // Determine status based on updated conditions
+        const status = calculateUserStatus(
+            new Date(update.lastUpdate).getTime(),
+            update.auxLabel,
+            update.isPaused
+        );
+
+        // Apply filtering
+        if ((currentFilter !== 'all' && status !== currentFilter) ||
+            (currentSearchTerm && !update.username.toLowerCase().includes(currentSearchTerm.toLowerCase()))) {
+            row.style.display = 'none';
         }
 
-        this.populateRowCells(row, update);
-        this.addRowHoverEffect(row, update);
-    }
+        // Set data attributes for filtering
+        row.setAttribute('data-username', update.username);
+        row.setAttribute('data-status', status);
 
-    static populateRowCells(row, update) {
-        // Username cell with avatar
+        // Username cell
         const usernameCell = row.insertCell();
-        usernameCell.innerHTML = this.createUsernameContent(update.username);
+        usernameCell.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <img src="https://badgephotos.corp.amazon.com/?uid=${update.username}"
+                     style="width: 24px; height: 24px; border-radius: 50%;"
+                     onerror="this.style.display='none'">
+                <span>${update.username}</span>
+            </div>
+        `;
 
-        // AUX Label
+        // AUX Label cell with pause indicator
         const auxCell = row.insertCell();
-        auxCell.innerHTML = this.createAuxLabelContent(update);
+        const auxLabel = determineAuxLevel(update.auxLabel);
+        auxCell.textContent = auxLabel;
+        if (update.isPaused) {
+            const pauseIndicator = document.createElement('span');
+            pauseIndicator.innerHTML = '⏸️';
+            pauseIndicator.title = 'AUX Paused';
+            pauseIndicator.style.opacity = '0.7';
+            auxCell.appendChild(pauseIndicator);
+        }
 
-        // Time
+        // Time cell with pause handling
         const timeCell = row.insertCell();
-        timeCell.id = `timer-${update.username}`;
-        timeCell.textContent = this.calculateTimeDisplay(update);
+        const timerId = `timer-${update.username}-${index}`;
+        timeCell.id = timerId;
+        updateTimerDashboard(timeCell, update);
 
-        // Status
+        // Status cell with enhanced pause state
         const statusCell = row.insertCell();
-        statusCell.innerHTML = this.createStatusContent(update.status);
+        updateStatusCell(statusCell, status);
+        if (update.isPaused) {
+            statusCell.style.color = '#FFA500';
+            statusCell.style.fontWeight = 'bold';
+        }
 
-        // Last Update
+        // Last Update cell
         const lastUpdateCell = row.insertCell();
         lastUpdateCell.textContent = new Date(update.lastUpdate).toLocaleTimeString();
 
-        // Pause Duration
+        // Calculate and display total pause duration
         const pauseTimeCell = row.insertCell();
-        pauseTimeCell.textContent = formatTime(update.totalPauseDuration || 0);
+        const totalPause = update.totalPauseDuration || 0;
+        pauseTimeCell.textContent = formatTime(totalPause);
 
-        // Login Time
+        // Add cells for login time
         const loginTimeCell = row.insertCell();
-        loginTimeCell.textContent = update.loginTime ? 
-            new Date(update.loginTime).toLocaleTimeString() : 'N/A';
+        const storedLoginTime = localStorage.getItem('dailyLoginTime');
+        loginTimeCell.textContent = storedLoginTime ?
+            new Date(storedLoginTime).toLocaleTimeString() :
+            new Date(update.loginTime).toLocaleTimeString();
 
-        // Logout Time
+        // Add logout time if exists
         const logoutTimeCell = row.insertCell();
-        logoutTimeCell.textContent = update.logoutTime ? 
-            new Date(update.logoutTime).toLocaleTimeString() : 'Active';
-    }
+        const storedLogoutTime = localStorage.getItem('dailyLogoutTime');
+        logoutTimeCell.textContent = storedLogoutTime ?
+            new Date(storedLogoutTime).toLocaleTimeString() :
+            (update.logoutTime ? new Date(update.logoutTime).toLocaleTimeString() : 'Active');
 
-    static createUsernameContent(username) {
-        return `
-            <div style="display: flex; align-items: center; gap: 10px;">
-                <img src="https://badgephotos.corp.amazon.com/?uid=${username}"
-                     style="width: 24px; height: 24px; border-radius: 50%;"
-                     onerror="this.style.display='none'">
-                <span>${username}</span>
-            </div>
-        `;
-    }
-
-    static createAuxLabelContent(update) {
-        let content = update.auxLabel || 'N/A';
+        // Visual indicators for paused state
         if (update.isPaused) {
-            content += ' <span style="opacity: 0.7;" title="AUX Paused">⏸️</span>';
-        }
-        return content;
-    }
+            row.style.opacity = '0.85';
+            row.style.backgroundColor = 'rgba(255, 165, 0, 0.05)';
+            row.style.borderLeft = '3px solid #FFA500';
+            row.style.animation = 'pausePulse 2s infinite';
 
-    static createStatusContent(status) {
-        return `
-            <span class="status-indicator status-${status}"></span>
-            ${status.charAt(0).toUpperCase() + status.slice(1)}
-        `;
-    }
-
-    static calculateTimeDisplay(update) {
-        const startTime = new Date(update.startTime).getTime();
-        const currentTime = Date.now();
-        const elapsedTime = currentTime - startTime - (update.totalPauseDuration || 0);
-        return formatTime(Math.max(0, elapsedTime));
-    }
-
-    static applyCurrentUserStyles(row) {
-        row.style.backgroundColor = 'rgba(108, 92, 231, 0.1)';
-        row.style.borderLeft = '3px solid #6c5ce7';
-    }
-
-    static applyPausedStyles(row) {
-        row.style.opacity = '0.85';
-        row.style.backgroundColor = 'rgba(255, 165, 0, 0.05)';
-        row.style.borderLeft = '3px solid #FFA500';
-        row.style.animation = 'pausePulse 2s infinite';
-    }
-
-    static addRowHoverEffect(row, update) {
-        row.style.cursor = 'pointer';
-        row.title = this.createRowTooltip(update);
-        row.addEventListener('click', () => this.showDetailedView(update));
-    }
-
-    static createRowTooltip(update) {
-        return `
-            Username: ${update.username}
-            AUX: ${update.auxLabel}
-            Status: ${update.status}
-            Login Time: ${update.loginTime ? new Date(update.loginTime).toLocaleString() : 'N/A'}
-            Last Update: ${new Date(update.lastUpdate).toLocaleString()}
-            Total Pause Duration: ${formatTime(update.totalPauseDuration)}
-            ${update.logoutTime ? 'Logout Time: ' + new Date(update.logoutTime).toLocaleString() : ''}
-        `;
-    }
-
-    static showDetailedView(update) {
-        SharedFunctions.showCustomAlert(this.createRowTooltip(update));
-    }
-}
-
-// Event Handlers and Main Dashboard Controller
-class DashboardController {
-    constructor() {
-        this.dashboardManager = new DashboardManager();
-        this.initialize();
-    }
-
-    initialize() {
-        // Initialize dashboard button listener
-        document.getElementById('dashboardButton')?.addEventListener('click', 
-            async () => this.handleDashboardButtonClick());
-
-        // Initialize online/offline handlers
-        window.addEventListener('online', () => this.handleOnline());
-        window.addEventListener('offline', () => this.handleOffline());
-
-        // Initialize error handler
-        window.addEventListener('unhandledrejection', 
-            event => this.handleError(event.reason));
-    }
-
-    async handleDashboardButtonClick() {
-        try {
-            await SharedFunctions.loadCognitoSDK();
-            await this.dashboardManager.initialize();
-        } catch (error) {
-            console.error('Dashboard access error:', error);
-            SharedFunctions.showCustomAlert('Failed to load dashboard. Please try again.');
-        }
-    }
-
-    handleOnline() {
-        console.log('Connection restored, restarting dashboard updates...');
-        if (document.getElementById('aux-dashboard')) {
-            this.dashboardManager.startUpdates();
-        }
-    }
-
-    handleOffline() {
-        console.log('Connection lost, stopping dashboard updates...');
-        this.dashboardManager.cleanup();
-        SharedFunctions.showCustomAlert('Connection lost. Dashboard updates paused.');
-    }
-
-    handleError(error) {
-        console.error('Unhandled error:', error);
-        if (error.code === 'CredentialsError') {
-            this.handleCredentialsError();
-        }
-    }
-
-    async handleCredentialsError() {
-        localStorage.removeItem('lastAuthUsername');
-        localStorage.removeItem('lastAuthPassword');
-        this.dashboardManager.cleanup();
-        
-        try {
-            const credentials = await SharedFunctions.showAuthModal();
-            if (credentials) {
-                await AuthManager.authenticate(credentials.username, credentials.password);
-                this.dashboardManager.initialize();
+            // Update time cell for paused state
+            timeCell.style.color = '#FFA500';
+            timeCell.style.fontWeight = 'bold';
+            if (!timeCell.textContent.includes('(Paused)')) {
+                timeCell.innerHTML = `${timeCell.textContent} <span style="color: #FFA500;">(Paused)</span>`;
             }
+        }
+
+        // Enhanced hover information
+        row.title = `Last Updated: ${new Date(update.lastUpdate).toLocaleString()}
+Total Pause Duration: ${formatTime(totalPause)}
+Status: ${status.charAt(0).toUpperCase() + status.slice(1)}
+${update.isPaused ? `Paused Since: ${new Date(update.pauseTime).toLocaleString()}` : ''}`;
+
+        // Add click handler for detailed view
+        row.style.cursor = 'pointer';
+        row.addEventListener('click', () => {
+            showDetailedView(update);
+        });
+    });
+
+    console.log('Dashboard UI updated with', updates.length, 'entries');
+    console.log('Current timers:', window.dashboardTimers.length);
+}
+
+// Helper function to show detailed view
+function showDetailedView(update) {
+    SharedFunctions.showCustomAlert(`
+        Username: ${update.username}
+        AUX: ${update.auxLabel}
+        Status: ${update.isPaused ? 'Paused' : 'Active'}
+        Login Time: ${new Date(update.loginTime).toLocaleString()}
+        Last Update: ${new Date(update.lastUpdate).toLocaleString()}
+        Total Pause Duration: ${formatTime(update.totalPauseDuration || 0)}
+        ${update.logoutTime ? 'Logout Time: ' + new Date(update.logoutTime).toLocaleString() : ''}
+    `);
+}
+
+// New helper function to determine which level to display
+function determineAuxLevel(auxLabel) {
+    if (!auxLabel) return '';
+
+    // Split the label by hyphens and trim each part
+    const parts = auxLabel.split('-').map(part => part.trim());
+
+    // If first part is "Microsite Project Work", show the complete label
+    if (parts[0] === 'Microsite Project Work') {
+        return auxLabel;
+    }
+
+    // For other cases, find the last non-N/A part
+    for (let i = parts.length - 1; i >= 0; i--) {
+        if (!parts[i].includes('N/A')) {
+            return parts[i];
+        }
+    }
+
+    return auxLabel; // Return original label if no valid parts found
+}
+
+
+function updateTimerDashboard(cell, update) {
+    if (update.isPaused) {
+        const pausedDuration = update.pauseTime - update.startTime - (update.totalPauseDuration || 0);
+        cell.textContent = formatTime(pausedDuration);
+    } else {
+        const currentDuration = Date.now() - update.startTime - (update.totalPauseDuration || 0);
+        cell.textContent = formatTime(currentDuration);
+    }
+}
+
+// Updated status cell helper function
+function updateStatusCell(cell, status) {
+    const statusColors = {
+        'active': '#4CAF50',
+        'away': '#FFC107',
+        'paused': '#FFA500',
+        'inactive': '#F44336'
+    };
+
+    const statusIcon = {
+        'active': '🟢',
+        'away': '🟡',
+        'paused': '⏸️',
+        'inactive': '🔴'
+    };
+
+    cell.innerHTML = `
+        <span class="status-indicator status-${status}"
+              style="background-color: ${statusColors[status]}">
+        </span>
+        ${status.charAt(0).toUpperCase() + status.slice(1)}
+    `;
+}
+
+function filterDashboard() {
+    const searchInput = document.querySelector('.search-input');
+    const statusFilter = document.querySelector('.status-filter');
+    currentSearchTerm = searchInput.value.toLowerCase();
+    currentFilter = statusFilter.value.toLowerCase();
+
+    const rows = document.querySelectorAll('#dashboard-data tr');
+    rows.forEach(row => {
+        const username = row.getAttribute('data-username').toLowerCase();
+        const status = row.getAttribute('data-status').toLowerCase();
+
+        const matchesSearch = username.includes(currentSearchTerm);
+        const matchesStatus = currentFilter === 'all' || status === currentFilter;
+
+        row.style.display = matchesSearch && matchesStatus ? '' : 'none';
+    });
+}
+
+// Attach event listeners
+document.addEventListener('DOMContentLoaded', () => {
+    const searchInput = document.querySelector('.search-input');
+    const statusFilter = document.querySelector('.status-filter');
+    setInitialLoginTime();
+    if (searchInput) {
+        searchInput.addEventListener('input', filterDashboard);
+    }
+
+    if (statusFilter) {
+        statusFilter.addEventListener('change', filterDashboard);
+    }
+});
+
+// Retry mechanism for failed updates
+async function retryOperation(operation, maxRetries = 3) {
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await operation();
         } catch (error) {
-            console.error('Re-authentication failed:', error);
-            SharedFunctions.showCustomAlert('Authentication failed. Please try again.');
+            if (i === maxRetries - 1) throw error;
+            await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
         }
     }
 }
 
-// Export and Initialize
-export const initializeDashboard = () => {
-    return new DashboardController();
-};
 ///////////////////////////////////////////////////////////////
 //Update Selections Body//
 
