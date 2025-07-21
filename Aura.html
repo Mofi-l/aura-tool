@@ -5040,20 +5040,35 @@ async function updateAWSCredentials(token) {
 
 // Helper function to calculate user status
 function calculateUserStatus(lastUpdateTime, auxLabel, isPaused) {
-    console.log('Calculating status:', { lastUpdateTime, auxLabel, isPaused }); // Add this log
+    console.log('Calculating status for:', {
+        lastUpdateTime,
+        auxLabel,
+        isPaused
+    });
+
     if (isPaused) {
         return 'paused';
     }
 
-    if (auxLabel && auxLabel.toLowerCase().includes('offline', 'undefined')) {
+    if (!auxLabel) {
         return 'inactive';
     }
 
-    if (auxLabel && auxLabel.toLowerCase().includes('on break')) {
+    const currentTime = Date.now();
+    const timeSinceUpdate = currentTime - lastUpdateTime;
+
+    // Log time difference
+    console.log('Time since last update (minutes):', timeSinceUpdate / (1000 * 60));
+
+    if (timeSinceUpdate > 5 * 60 * 1000) {
+        return 'inactive';
+    }
+
+    if (auxLabel.toLowerCase().includes('on break')) {
         return 'away';
     }
 
-    return auxLabel ? 'active' : 'inactive';
+    return 'active';
 }
 
 // Helper function to format time display
@@ -5063,6 +5078,48 @@ function formatTime(ms) {
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function verifyUserData(username) {
+    const s3 = new AWS.S3();
+    return s3.getObject({
+        Bucket: 'real-time-databucket',
+        Key: `aux-realtime/${username}.json`
+    }).promise()
+    .then(data => {
+        const userData = JSON.parse(data.Body.toString());
+        console.log('Direct user data check:', userData);
+        return userData;
+    })
+    .catch(error => {
+        console.error('Error verifying user data:', error);
+        return null;
+    });
+}
+
+// Add this to your dashboard update logic
+if (document.getElementById('aux-dashboard')) {
+    const specificUser = "********";
+    verifyUserData(specificUser).then(userData => {
+        console.log('Verified user data:', userData);
+    });
+}
+
+function addRefreshButton() {
+    const refreshButton = document.createElement('button');
+    refreshButton.textContent = '🔄 Refresh';
+    refreshButton.onclick = async () => {
+        const loadingIndicator = document.createElement('div');
+        loadingIndicator.textContent = 'Refreshing...';
+        document.body.appendChild(loadingIndicator);
+        
+        try {
+            await updateDashboardData(true);
+        } finally {
+            loadingIndicator.remove();
+        }
+    };
+    document.querySelector('.dashboard-controls').appendChild(refreshButton);
 }
 
 // Part 2: Dashboard UI Initialization and Styling
@@ -5698,10 +5755,8 @@ async function updateDashboardData(isImmediateUpdate = false) {
     try {
         console.log('Updating dashboard data...', isImmediateUpdate ? '(Immediate update)' : '');
 
-        // First, ensure AWS SDK is loaded
         await SharedFunctions.loadAwsSdk();
 
-        // Check and refresh credentials if needed
         let token;
         try {
             token = await refreshCredentials();
@@ -5715,7 +5770,6 @@ async function updateDashboardData(isImmediateUpdate = false) {
             localStorage.setItem('lastAuthPassword', credentials.password);
         }
 
-        // Configure AWS with the token
         AWS.config.update({
             region: 'eu-north-1',
             credentials: new AWS.CognitoIdentityCredentials({
@@ -5726,7 +5780,6 @@ async function updateDashboardData(isImmediateUpdate = false) {
             })
         });
 
-        // Wait for credentials to be initialized
         await new Promise((resolve, reject) => {
             AWS.config.credentials.get(err => {
                 if (err) reject(err);
@@ -5744,10 +5797,8 @@ async function updateDashboardData(isImmediateUpdate = false) {
         console.log(`Found ${response.Contents.length} AUX updates`);
 
         const currentTime = Date.now();
-        const today = new Date().setHours(0, 0, 0, 0);
         const currentUsername = localStorage.getItem('lastAuthUsername');
 
-        // Process all updates first
         const updates = await Promise.all(response.Contents.map(async (item) => {
             try {
                 const data = await s3.getObject({
@@ -5756,44 +5807,73 @@ async function updateDashboardData(isImmediateUpdate = false) {
                 }).promise();
 
                 const userState = JSON.parse(data.Body.toString());
+                
+                // Validate required fields
+                if (!userState.username || !userState.auxLabel || !userState.lastUpdate) {
+                    console.warn(`Invalid user state for ${item.Key}:`, userState);
+                    return null;
+                }
+
                 const lastUpdateTime = new Date(userState.lastUpdate).getTime();
-                const updateDate = new Date(lastUpdateTime).setHours(0, 0, 0, 0);
                 const timeSinceUpdate = currentTime - lastUpdateTime;
 
-              //  if (updateDate === today) {
-                    return {
-                        ...userState,
-                        fileKey: item.Key,
-                        lastModified: item.LastModified,
-                        timeSinceUpdate,
-                        isPaused: userState.isPaused || false,
-                        status: calculateUserStatus(
-                            lastUpdateTime,
-                            userState.auxLabel,
-                            userState.isPaused
-                        )
-                    };
-               //    }
-                return null;
+                return {
+                    ...userState,
+                    fileKey: item.Key,
+                    lastModified: item.LastModified,
+                    timeSinceUpdate,
+                    isPaused: Boolean(userState.isPaused),
+                    totalPauseDuration: parseInt(userState.totalPauseDuration) || 0,
+                    loginTime: userState.loginTime ? new Date(userState.loginTime).toISOString() : null,
+                    logoutTime: userState.logoutTime ? new Date(userState.logoutTime).toISOString() : null,
+                    lastUpdate: new Date(userState.lastUpdate).toISOString(),
+                    status: calculateUserStatus(
+                        lastUpdateTime,
+                        userState.auxLabel || '',
+                        Boolean(userState.isPaused)
+                    )
+                };
             } catch (error) {
                 console.error(`Error processing file ${item.Key}:`, error);
                 return null;
             }
         }));
 
-        // Filter out nulls and sort updates
         const validUpdates = updates
-            .filter(update => update !== null)
+            .filter(update => {
+                if (!update) return false;
+                try {
+                    // Additional validation
+                    return (
+                        update.username &&
+                        update.auxLabel &&
+                        update.lastUpdate &&
+                        !isNaN(new Date(update.lastUpdate).getTime())
+                    );
+                } catch (e) {
+                    console.error('Validation error for update:', e, update);
+                    return false;
+                }
+            })
             .map(update => {
-                console.log('Processing update:', update);
+                console.log('Processing update:', {
+                    username: update.username,
+                    auxLabel: update.auxLabel,
+                    lastUpdate: update.lastUpdate,
+                    status: update.status
+                });
+
                 const status = calculateUserStatus(
                     new Date(update.lastUpdate).getTime(),
                     update.auxLabel,
                     update.isPaused
                 );
+
                 return {
                     ...update,
-                    status
+                    status,
+                    loginTime: update.loginTime || null,
+                    logoutTime: update.logoutTime || null
                 };
             })
             .sort((a, b) => {
@@ -5803,40 +5883,34 @@ async function updateDashboardData(isImmediateUpdate = false) {
             });
 
         console.log('Processed updates:', validUpdates.length);
-
-        // Store the latest updates for CSV download
         lastUpdates = validUpdates;
-
-        // Update UI with the processed data
         updateDashboardUI(validUpdates);
 
-        // Add continuous timer updates
-        function updateDashboardTimers() {
-            const timerCells = document.querySelectorAll('.dashboard-table td:nth-child(3)');
-            timerCells.forEach(cell => {
-                const row = cell.parentElement;
-                const username = row.getAttribute('data-username');
-                const auxState = JSON.parse(localStorage.getItem('auxState')) || {};
-
-                if (auxState && !auxState.isPaused && auxState.username === username) {
-                    const startTime = auxState.startTime;
-                    const totalPauseDuration = auxState.totalPauseDuration || 0;
-                    const elapsedTime = Date.now() - startTime - totalPauseDuration;
-                    cell.textContent = formatTime(elapsedTime);
-                }
-            });
-
-            // Continue the animation frame if the dashboard is still open
-            if (document.getElementById('aux-dashboard')) {
-                dashboardAnimationFrame = requestAnimationFrame(updateDashboardTimers);
-            }
-        }
-
-        // Start the continuous timer updates
         if (document.getElementById('aux-dashboard')) {
             if (dashboardAnimationFrame) {
                 cancelAnimationFrame(dashboardAnimationFrame);
             }
+
+            function updateDashboardTimers() {
+                const timerCells = document.querySelectorAll('.dashboard-table td:nth-child(3)');
+                timerCells.forEach(cell => {
+                    const row = cell.parentElement;
+                    const username = row.getAttribute('data-username');
+                    const update = validUpdates.find(u => u.username === username);
+
+                    if (update && !update.isPaused) {
+                        const startTime = new Date(update.loginTime || update.lastUpdate).getTime();
+                        const totalPauseDuration = update.totalPauseDuration || 0;
+                        const elapsedTime = Date.now() - startTime - totalPauseDuration;
+                        cell.textContent = formatTime(elapsedTime);
+                    }
+                });
+
+                if (document.getElementById('aux-dashboard')) {
+                    dashboardAnimationFrame = requestAnimationFrame(updateDashboardTimers);
+                }
+            }
+
             dashboardAnimationFrame = requestAnimationFrame(updateDashboardTimers);
         }
 
@@ -5845,7 +5919,6 @@ async function updateDashboardData(isImmediateUpdate = false) {
         handleUpdateError(error);
     }
 }
-
 
 // Error handling function
 function handleUpdateError(error) {
@@ -5936,13 +6009,11 @@ function updateDashboardUI(updates) {
         return;
     }
 
-    // Clear existing timers
+    // Clear existing timers and content
     if (window.dashboardTimers) {
         window.dashboardTimers.forEach(timer => clearInterval(timer));
     }
     window.dashboardTimers = [];
-
-    // Clear existing content
     tbody.innerHTML = '';
 
     // Add pause pulse animation
@@ -5959,122 +6030,142 @@ function updateDashboardUI(updates) {
     const currentUsername = localStorage.getItem("currentUsername");
 
     updates.forEach((update, index) => {
-        const row = tbody.insertRow();
-        const isCurrentUser = update.username === currentUsername;
-
-        // Add highlighting for current user
-        if (isCurrentUser) {
-            row.style.backgroundColor = 'rgba(108, 92, 231, 0.1)';
-            row.style.borderLeft = '3px solid #6c5ce7';
-        }
-
-        // Determine status based on updated conditions
-        const status = calculateUserStatus(
-            new Date(update.lastUpdate).getTime(),
-            update.auxLabel,
-            update.isPaused
-        );
-
-        // Apply filtering
-        if ((currentFilter !== 'all' && status !== currentFilter) ||
-            (currentSearchTerm && !update.username.toLowerCase().includes(currentSearchTerm.toLowerCase()))) {
-            row.style.display = 'none';
-        }
-
-        // Set data attributes for filtering
-        row.setAttribute('data-username', update.username);
-        row.setAttribute('data-status', status);
-
-        // Username cell
-        const usernameCell = row.insertCell();
-        usernameCell.innerHTML = `
-            <div style="display: flex; align-items: center; gap: 10px;">
-                <img src="https://badgephotos.corp.amazon.com/?uid=${update.username}"
-                     style="width: 24px; height: 24px; border-radius: 50%;"
-                     onerror="this.style.display='none'">
-                <span>${update.username}</span>
-            </div>
-        `;
-
-        // AUX Label cell with pause indicator
-        const auxCell = row.insertCell();
-        const auxLabel = determineAuxLevel(update.auxLabel);
-        auxCell.textContent = auxLabel;
-        if (update.isPaused) {
-            const pauseIndicator = document.createElement('span');
-            pauseIndicator.innerHTML = '⏸️';
-            pauseIndicator.title = 'AUX Paused';
-            pauseIndicator.style.opacity = '0.7';
-            auxCell.appendChild(pauseIndicator);
-        }
-
-        // Time cell with pause handling
-        const timeCell = row.insertCell();
-        const timerId = `timer-${update.username}-${index}`;
-        timeCell.id = timerId;
-        updateTimerDashboard(timeCell, update);
-
-        // Status cell with enhanced pause state
-        const statusCell = row.insertCell();
-        updateStatusCell(statusCell, status);
-        if (update.isPaused) {
-            statusCell.style.color = '#FFA500';
-            statusCell.style.fontWeight = 'bold';
-        }
-
-        // Last Update cell
-        const lastUpdateCell = row.insertCell();
-        lastUpdateCell.textContent = new Date(update.lastUpdate).toLocaleTimeString();
-
-        // Calculate and display total pause duration
-        const pauseTimeCell = row.insertCell();
-        const totalPause = update.totalPauseDuration || 0;
-        pauseTimeCell.textContent = formatTime(totalPause);
-
-        // Add cells for login time
-        const loginTimeCell = row.insertCell();
-        const storedLoginTime = localStorage.getItem('dailyLoginTime');
-        loginTimeCell.textContent = storedLoginTime ?
-            new Date(storedLoginTime).toLocaleTimeString() :
-            new Date(update.loginTime).toLocaleTimeString();
-
-        // Add logout time if exists
-        const logoutTimeCell = row.insertCell();
-        const storedLogoutTime = localStorage.getItem('dailyLogoutTime');
-        logoutTimeCell.textContent = storedLogoutTime ?
-            new Date(storedLogoutTime).toLocaleTimeString() :
-            (update.logoutTime ? new Date(update.logoutTime).toLocaleTimeString() : 'Active');
-
-        // Visual indicators for paused state
-        if (update.isPaused) {
-            row.style.opacity = '0.85';
-            row.style.backgroundColor = 'rgba(255, 165, 0, 0.05)';
-            row.style.borderLeft = '3px solid #FFA500';
-            row.style.animation = 'pausePulse 2s infinite';
-
-            // Update time cell for paused state
-            timeCell.style.color = '#FFA500';
-            timeCell.style.fontWeight = 'bold';
-            if (!timeCell.textContent.includes('(Paused)')) {
-                timeCell.innerHTML = `${timeCell.textContent} <span style="color: #FFA500;">(Paused)</span>`;
+        try {
+            // Validate update object
+            if (!update || !update.username) {
+                console.error('Invalid update object:', update);
+                return;
             }
-        }
 
-        // Enhanced hover information
-        row.title = `Last Updated: ${new Date(update.lastUpdate).toLocaleString()}
+            console.log('Processing update:', {
+                username: update.username,
+                auxLabel: update.auxLabel,
+                lastUpdate: update.lastUpdate,
+                loginTime: update.loginTime
+            });
+
+            const row = tbody.insertRow();
+            const isCurrentUser = update.username === currentUsername;
+
+            // Current user highlighting
+            if (isCurrentUser) {
+                row.style.backgroundColor = 'rgba(108, 92, 231, 0.1)';
+                row.style.borderLeft = '3px solid #6c5ce7';
+            }
+
+            // Status determination
+            const status = calculateUserStatus(
+                new Date(update.lastUpdate || Date.now()).getTime(),
+                update.auxLabel || '',
+                Boolean(update.isPaused)
+            );
+
+            // Filtering
+            if ((currentFilter !== 'all' && status !== currentFilter) ||
+                (currentSearchTerm && !update.username.toLowerCase().includes(currentSearchTerm.toLowerCase()))) {
+                row.style.display = 'none';
+            }
+
+            // Data attributes
+            row.setAttribute('data-username', update.username);
+            row.setAttribute('data-status', status);
+
+            // Username cell
+            const usernameCell = row.insertCell();
+            usernameCell.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <img src="https://badgephotos.corp.amazon.com/?uid=${update.username}"
+                         style="width: 24px; height: 24px; border-radius: 50%;"
+                         onerror="this.style.display='none'">
+                    <span>${update.username}</span>
+                </div>
+            `;
+
+            // AUX Label cell
+            const auxCell = row.insertCell();
+            const auxLabel = update.auxLabel || 'N/A';
+            auxCell.textContent = auxLabel;
+            if (update.isPaused) {
+                const pauseIndicator = document.createElement('span');
+                pauseIndicator.innerHTML = '⏸️';
+                pauseIndicator.title = 'AUX Paused';
+                pauseIndicator.style.opacity = '0.7';
+                auxCell.appendChild(pauseIndicator);
+            }
+
+            // Time cell
+            const timeCell = row.insertCell();
+            const timerId = `timer-${update.username}-${index}`;
+            timeCell.id = timerId;
+            
+            // Calculate elapsed time
+            const startTime = new Date(update.startTime).getTime();
+            const currentTime = Date.now();
+            const elapsedTime = currentTime - startTime - (update.totalPauseDuration || 0);
+            timeCell.textContent = formatTime(Math.max(0, elapsedTime));
+
+            // Status cell
+            const statusCell = row.insertCell();
+            updateStatusCell(statusCell, status);
+            if (update.isPaused) {
+                statusCell.style.color = '#FFA500';
+                statusCell.style.fontWeight = 'bold';
+            }
+
+            // Last Update cell
+            const lastUpdateCell = row.insertCell();
+            const lastUpdateTime = update.lastUpdate ? new Date(update.lastUpdate) : new Date();
+            lastUpdateCell.textContent = lastUpdateTime.toLocaleTimeString();
+
+            // Pause Duration cell
+            const pauseTimeCell = row.insertCell();
+            const totalPause = update.totalPauseDuration || 0;
+            pauseTimeCell.textContent = formatTime(totalPause);
+
+            // Login Time cell
+            const loginTimeCell = row.insertCell();
+            const loginTime = update.loginTime ? new Date(update.loginTime) : null;
+            loginTimeCell.textContent = loginTime ? loginTime.toLocaleTimeString() : 'N/A';
+
+            // Logout Time cell
+            const logoutTimeCell = row.insertCell();
+            const logoutTime = update.logoutTime ? new Date(update.logoutTime) : null;
+            logoutTimeCell.textContent = logoutTime ? logoutTime.toLocaleTimeString() : 'Active';
+
+            // Paused state visual indicators
+            if (update.isPaused) {
+                row.style.opacity = '0.85';
+                row.style.backgroundColor = 'rgba(255, 165, 0, 0.05)';
+                row.style.borderLeft = '3px solid #FFA500';
+                row.style.animation = 'pausePulse 2s infinite';
+                timeCell.style.color = '#FFA500';
+                timeCell.style.fontWeight = 'bold';
+                if (!timeCell.textContent.includes('(Paused)')) {
+                    timeCell.innerHTML = `${timeCell.textContent} <span style="color: #FFA500;">(Paused)</span>`;
+                }
+            }
+
+            // Hover information
+            row.title = `Username: ${update.username}
+AUX: ${auxLabel}
+Status: ${status}
+Login Time: ${loginTime ? loginTime.toLocaleString() : 'N/A'}
+Last Update: ${lastUpdateTime.toLocaleString()}
 Total Pause Duration: ${formatTime(totalPause)}
-Status: ${status.charAt(0).toUpperCase() + status.slice(1)}
-${update.isPaused ? `Paused Since: ${new Date(update.pauseTime).toLocaleString()}` : ''}`;
+${update.logoutTime ? 'Logout Time: ' + new Date(update.logoutTime).toLocaleString() : ''}`;
 
-        // Add click handler for detailed view
-        row.style.cursor = 'pointer';
-        row.addEventListener('click', () => {
-            showDetailedView(update);
-        });
+            // Click handler
+            row.style.cursor = 'pointer';
+            row.addEventListener('click', () => {
+                showDetailedView(update);
+            });
+
+        } catch (error) {
+            console.error('Error processing update:', error, update);
+        }
     });
 
-    console.log('Dashboard UI updated with', updates.length, 'entries');
-    console.log('Current timers:', window.dashboardTimers.length);
+    console.log(`Dashboard UI updated with ${updates.length} entries`);
 }
 
 // Helper function to show detailed view
