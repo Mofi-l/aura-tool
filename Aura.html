@@ -5040,20 +5040,23 @@ async function updateAWSCredentials(token) {
 
 // Helper function to calculate user status
 function calculateUserStatus(lastUpdateTime, auxLabel, isPaused) {
-    console.log('Calculating status:', { lastUpdateTime, auxLabel, isPaused }); // Add this log
+    // Handle paused state
     if (isPaused) {
         return 'paused';
     }
 
-    if (auxLabel && auxLabel.toLowerCase().includes('offline', 'undefined')) {
+    // Handle offline or undefined state
+    if (!auxLabel || auxLabel.toLowerCase() === 'offline' || auxLabel.toLowerCase() === 'undefined') {
         return 'inactive';
     }
 
-    if (auxLabel && auxLabel.toLowerCase().includes('on break')) {
+    // Handle break state
+    if (auxLabel.toLowerCase().includes('break')) {
         return 'away';
     }
 
-    return auxLabel ? 'active' : 'inactive';
+    // Default case - active
+    return 'active';
 }
 
 // Helper function to format time display
@@ -5845,7 +5848,6 @@ async function updateDashboardData(isImmediateUpdate = false) {
         handleUpdateError(error);
     }
 }
-
 
 // Error handling function
 function handleUpdateError(error) {
