@@ -2561,11 +2561,22 @@ async function importFromAws() {
             const dateRange = await selectDateRange();
             startDateTime = dateRange.startDateTime;
             endDateTime = dateRange.endDateTime;
+
+            // Validate date range
+            if (startDateTime >= endDateTime) {
+                throw new Error('Start date must be before end date');
+            }
+
+            const maxRange = 365 * 24 * 60 * 60 * 1000; // 1 year
+            if (endDateTime - startDateTime > maxRange) {
+                throw new Error('Date range cannot exceed 1 year');
+            }
         } catch (err) {
             console.error('Date range selection error:', err);
             return;
         }
 
+        // Authentication
         const modal = createAuthModal();
         document.body.appendChild(modal);
 
@@ -2575,7 +2586,7 @@ async function importFromAws() {
                 const password = document.getElementById('password').value.trim();
 
                 if (!username || !password) {
-                    SharedFunctions.showCustomAlert('Both username and password are required.');
+                    S  SharedFunctions.showCustomAlert('Both username and password are required.');
                     return;
                 }
 
@@ -2585,25 +2596,25 @@ async function importFromAws() {
 
                 try {
                     const token = await authenticate(username, password);
-// After authentication succeeds, configure AWS:
-AWS.config.update({
-  region: 'eu-north-1',
-  credentials: new AWS.CognitoIdentityCredentials({
-    IdentityPoolId: 'eu-north-1:98c07095-e731-4219-bebe-db4dab892ea8',
-    Logins: {
-      'cognito-idp.eu-north-1.amazonaws.com/eu-north-1_V9kLPNVXl': token
-    }
-  })
-});
 
-// Wait for credentials to be initialized:
-await new Promise((resolve, reject) => {
-  AWS.config.credentials.get(err => {
-    if (err) reject(err);
-    else resolve();
-  });
-});
+                    // Configure AWS
+                    AWS.config.update({
+                        region: 'eu-north-1',
+                        credentials: new AWS.CognitoIdentityCredentials({
+                            IdentityPoolId: 'eu-north-1:98c07095-e731-4219-bebe-db4dab892ea8',
+                            Logins: {
+                                'cognito-idp.eu-north-1.amazonaws.com/eu-north-1_V9kLPNVXl': token
+                            }
+                        })
+                    });
 
+                    // Wait for credentials initialization
+                    await new Promise((resolve, reject) => {
+                        AWS.config.credentials.get(err => {
+                            if (err) reject(err);
+                            else resolve();
+                        });
+                    });
 
                     const s3 = new AWS.S3();
                     const bucketName = 'aux-data-bucket';
@@ -2615,21 +2626,50 @@ await new Promise((resolve, reject) => {
                         end: new Date(endDateTime).toISOString()
                     });
 
+                    // Verify bucket access
+                    try {
+                        await s3.headBucket({ Bucket: bucketName }).promise();
+                    } catch (error) {
+                        if (error.code === 'NotFound') {
+                            throw new Error('Data bucket not found');
+                        } else if (error.code === 'Forbidden') {
+                            throw new Error('No access to data bucket');
+                        }
+                        throw error;
+                    }
+
+                    // Implement retry logic for data fetching
+                    const fetchWithRetry = async (operation, maxRetries = 3) => {
+                        for (let i = 0; i < maxRetries; i++) {
+                            try {
+                                return await operation();
+                            } catch (error) {
+                                if (i === maxRetries - 1) throw error;
+                                await new Promise(resolve => 
+                                    setTimeout(resolve, Math.pow(2, i) * 1000));
+                            }
+                        }
+                    };
+
                     for (const prefix of prefixes) {
                         try {
-                            const listedObjects = await s3.listObjectsV2({
-                                Bucket: bucketName,
-                                Prefix: prefix
-                            }).promise();
+                            const listedObjects = await fetchWithRetry(() => 
+                                s3.listObjectsV2({
+                                    Bucket: bucketName,
+                                    Prefix: prefix
+                                }).promise()
+                            );
 
                             console.log(`Found ${listedObjects.Contents.length} files with prefix ${prefix}`);
 
                             for (const item of listedObjects.Contents) {
                                 try {
-                                    const fileData = await s3.getObject({
-                                        Bucket: bucketName,
-                                        Key: item.Key
-                                    }).promise();
+                                    const fileData = await fetchWithRetry(() => 
+                                        s3.getObject({
+                                            Bucket: bucketName,
+                                            Key: item.Key
+                                        }).promise()
+                                    );
 
                                     const fileContent = fileData.Body.toString('utf-8');
                                     const rows = fileContent.split(/\r?\n/).filter(row => row.trim());
@@ -2644,22 +2684,31 @@ await new Promise((resolve, reject) => {
                                             try {
                                                 const rowDate = new Date(date).getTime();
 
-                                                if (rowDate >= startDateTime &&
-                                                    rowDate <= endDateTime &&
+                                                if (rowDate >= startDateTime && 
+                                                    rowDate <= endDateTime && 
                                                     rowUsername === username) {
 
                                                     let processedTimeSpent = timeSpent;
-                                                       if (timeSpent && !timeSpent.includes(':')) {
+                                                    if (timeSpent && !timeSpent.includes(':')) {
                                                         const minutes = parseFloat(timeSpent);
                                                         if (!isNaN(minutes) && minutes > 0) {
                                                             const hours = Math.floor(minutes / 60);
                                                             const mins = Math.floor(minutes % 60);
                                                             const secs = Math.floor((minutes * 60) % 60);
-                                                            processedTimeSpent = `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                                                            processedTimeSpent = 
+                                                                `${hours.toString().padStart(2, '0')}:` +
+                                                                `${mins.toString().padStart(2, '0')}:` +
+                                                                `${secs.toString().padStart(2, '0')}`;
                                                         }
                                                     }
 
-                                                    const processedRow = [date, rowUsername, auxLabel, processedTimeSpent, ...rest].join(',');
+                                                    const processedRow = [
+                                                        date, 
+                                                        rowUsername, 
+                                                        auxLabel, 
+                                                        processedTimeSpent, 
+                                                        ...rest
+                                                    ].join(',');
                                                     relevantData.add(processedRow);
                                                 }
                                             } catch (dateError) {
@@ -2667,7 +2716,7 @@ await new Promise((resolve, reject) => {
                                                 continue;
                                             }
                                         }
-                                       }
+                                    }
                                 } catch (fileError) {
                                     console.error(`Error processing file ${item.Key}:`, fileError);
                                     continue;
@@ -2687,8 +2736,10 @@ await new Promise((resolve, reject) => {
                         return;
                     }
 
-                    const csvContent = `Date,Username,AUX Label,Time Spent,Project Title,Related Audits,Are You the PL?,Comment,Site\n${uniqueData.join('\n')}`;
-                    const blob = new Blob([csvContent], { type: 'text/csvcsv' });
+                    // Create and download CSV file
+                    const csvContent = 
+                        `Date,Username,AUX Label,Time Spent,Project Title,Related Audits,Are You the PL?,Comment\n${uniqueData.join('\n')}`;
+                    const blob = new Blob([csvContent], { type: 'text/csv' });
                     const url = URL.createObjectURL(blob);
                     const link = document.createElement('a');
                     link.href = url;
@@ -2704,9 +2755,14 @@ await new Promise((resolve, reject) => {
 
                     SharedFunctions.showCustomAlert('Data successfully imported and downloaded!');
                     modal.remove();
+
                 } catch (error) {
                     console.error('Error during import:', error);
-                    SharedFunctions.showCustomAlert('Failed to import data. Please try again.');
+                    SharedFunctions.showCustomAlert(
+                        error.code === 'CredentialsError' ? 
+                        'Authentication expired. Please try again.' : 
+                        'Failed to import data. Please try again.'
+                    );
                 } finally {
                     if (document.body.contains(loadingIndicator)) {
                         document.body.removeChild(loadingIndicator);
@@ -2720,6 +2776,7 @@ await new Promise((resolve, reject) => {
                 resolve();
             });
         });
+
     } catch (error) {
         console.error('Error in importFromAws:', error);
         SharedFunctions.showCustomAlert('Failed to initialize import process.');
@@ -2915,7 +2972,6 @@ async function getFullData() {
                 color: #ffffff;
                 cursor: pointer;
                 transition: all 0.3s ease;
-                font-size: 1rem;
             }
 
             .selection-btn:hover {
@@ -2932,7 +2988,6 @@ async function getFullData() {
         `;
         document.head.appendChild(styles);
 
-
         // Create selection modal
         const selectionModal = document.createElement('div');
         selectionModal.className = 'selection-modal';
@@ -2945,7 +3000,6 @@ async function getFullData() {
             </div>
         `;
         document.body.appendChild(selectionModal);
-
 
         let dateRange = await new Promise((resolve) => {
             document.getElementById('ytd-btn').onclick = () => {
@@ -2978,6 +3032,7 @@ async function getFullData() {
             return;
         }
 
+        // Authentication
         const token = await new Promise((resolve, reject) => {
             const modal = createAuthModal();
             document.body.appendChild(modal);
@@ -3006,27 +3061,24 @@ async function getFullData() {
                 reject(new Error('Authentication cancelled'));
             });
         });
-
         // Configure AWS
-// After authentication succeeds, configure AWS:
-AWS.config.update({
-  region: 'eu-north-1',
-  credentials: new AWS.CognitoIdentityCredentials({
-    IdentityPoolId: 'eu-north-1:98c07095-e731-4219-bebe-db4dab892ea8',
-    Logins: {
-      'cognito-idp.eu-north-1.amazonaws.com/eu-north-1_V9kLPNVXl': token
-    }
-  })
-});
+        AWS.config.update({
+            region: 'eu-north-1',
+            credentials: new AWS.CognitoIdentityCredentials({
+                IdentityPoolId: 'eu-north-1:98c07095-e731-4219-bebe-db4dab892ea8',
+                Logins: {
+                    'cognito-idp.eu-north-1.amazonaws.com/eu-north-1_V9kLPNVXl': token
+                }
+            })
+        });
 
-// Wait for credentials to be initialized:
-await new Promise((resolve, reject) => {
-  AWS.config.credentials.get(err => {
-    if (err) reject(err);
-    else resolve();
-  });
-});
-
+        // Wait for credentials to be initialized
+        await new Promise((resolve, reject) => {
+            AWS.config.credentials.get(err => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
 
         const loadingIndicator = SharedFunctions.createLoadingIndicator();
         document.body.appendChild(loadingIndicator);
@@ -3040,93 +3092,107 @@ await new Promise((resolve, reject) => {
             // Load MS_Sites mapping
             const siteMap = await loadMSSitesData();
 
-for (const prefix of prefixes) {
-    try {
-        const listedObjects = await listAllObjects(s3, bucketName, prefix);
-        console.log(`Found ${listedObjects.length} files with prefix ${prefix}`);
-
-        for (const item of listedObjects) {
-            try {
-                const fileData = await s3.getObject({
-                    Bucket: bucketName,
-                    Key: item.Key
-                }).promise();
-
-                const fileContent = fileData.Body.toString('utf-8');
-                const lines = fileContent.split(/\r?\n/);
-                const headers = lines[0].split(',').map(h => h.trim());
-
-                for (let i = 1; i < lines.length; i++) {
-                    const line = lines[i].trim();
-                    if (!line) continue;
-
-                    const row = parseCSVLine(line);
-                    if (row.length < headers.ls.length) continue;
-
-                    const rowData = {};
-                    headers.forEach((header, index) => {
-                        rowData[header] = row[index] || '';
-                    });
-
+            // Implement retry logic
+            const fetchWithRetry = async (operation, maxRetries = 3) => {
+                for (let i = 0; i < maxRetries; i++) {
                     try {
-                        const date = rowData['Date'];
-                        if (!date || date.trim() === '') continue;
-
-                        const rowDate = new Date(date).getTime();
-                        if (rowDate >= dateRange.startDateTime && rowDate <= dateRange.endDateTime) {
-                            const username = rowData['Username'] || 'N/A';
-                            const auxLabel = rowData['AUX Label'] || 'N/A';
-                            const timeSpent = formatTimeSpent(rowData['Time Spent']);
-                            
-                            // Skip invalid time entries
-                            if (timeSpent === '00:00:00' || timeSpent === '0.00') continue;
-
-                            const projectTitle = rowData['Project Title'] || 'N/A';
-                            const relatedAudits = rowData['Related Audits'] || 'N/A';
-                            const areYouPL = validateAreYouPL(rowData['Are You the PL?']);
-                            const comment = rowData['Comment'] || 'N/A';
-                            const site = handleEmptyValue(siteMap[username] || 'N/A');
-
-                            const auxLabels = splitAuxLabel(auxLabel);
-                            const weekNum = getWeekNumber(date);
-                            const month = getMonthName(date);
-                            const timeMinutes = convertTimeToMinutes(timeSpent);
-                            const timeHours = convertMinutesToHours(timeMinutes);
-
-                            const processedRow = [
-                                escapeCSVField(date),
-                                escapeCSVField(weekNum),
-                                escapeCSVField(month),
-                                escapeCSVField(username),
-                                escapeCSVField(handleEmptyValue(auxLabels['Aux L1'])),
-                                escapeCSVField(handleEmptyValue(auxLabels['Aux L2'])),
-                                escapeCSVField(handleEmptyValue(auxLabels['Aux L3'])),
-                                escapeCSVField(handleEmptyValue(projectTitle)),
-                                escapeCSVField(handleEmptyValue(relatedAudits)),
-                                escapeCSVField(handleEmptyValue(areYouPL)),
-                                escapeCSVField(handleEmptyValue(comment)),
-                                escapeCSVField(timeMinutes),
-                                escapeCSVField(timeHours),
-                                escapeCSVField(site)
-                            ].join(',');
-
-                            relevantData.add(processedRow);
-                        }
-                    } catch (dateError) {
-                        console.error('Error processing date:', dateError);
-                        continue;
+                        return await operation();
+                    } catch (error) {
+                        if (i === maxRetries - 1) throw error;
+                        await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
                     }
                 }
-            } catch (fileError) {
-                console.error(`Error processing file ${item.Key}:`, fileError);
-                continue;
+            };
+
+            for (const prefix of prefixes) {
+                try {
+                    const listedObjects = await listAllObjects(s3, bucketName, prefix);
+                    console.log(`Found ${listedObjects.length} files with prefix ${prefix}`);
+
+                    for (const item of listedObjects) {
+                        try {
+                            const fileData = await fetchWithRetry(() => 
+                                s3.getObject({
+                                    Bucket: bucketName,
+                                    Key: item.Key
+                                }).promise()
+                            );
+
+                            const fileContent = fileData.Body.toString('utf-8');
+                            const lines = fileContent.split(/\r?\n/);
+                            const headers = lines[0].split(',').map(h => h.trim());
+
+                            for (let i = 1; i < lines.length; i++) {
+                                const line = lines[i].trim();
+                                if (!line) continue;
+
+                                const row = parseCSVLine(line);
+                                if (row.length < headers.length) continue;
+
+                                const rowData = {};
+                                headers.forEach((header, index) => {
+                                    rowData[header] = row[index] || '';
+                                });
+
+                                try {
+                                    const date = rowData['Date'];
+                                    if (!date || date.trim() === '') continue;
+
+                                    const rowDate = new Date(date).getTime();
+                                    if (rowDate >= dateRange.startDateTime && rowDate <= dateRange.endDateTime) {
+                                        const username = rowData['Username'] || 'N/A';
+                                        const auxLabel = rowData['AUX Label'] || 'N/A';
+                                        const timeSpent = formatTimeSpent(rowData['Time Spent']);
+                                        
+                                        // Skip invalid time entries
+                                        if (timeSpent === '00:00:00' || timeSpent === '0.00') continue;
+
+                                        const projectTitle = rowData['Project Title'] || 'N/A';
+                                        const relatedAudits = rowData['Related Audits'] || 'N/A';
+                                        const areYouPL = validateAreYouPL(rowData['Are You the PL?']);
+                                        const comment = rowData['Comment'] || 'N/A';
+                                        const site = handleEmptyValue(siteMap[username] || 'N/A');
+
+                                        const auxLabels = splitAuxLabel(auxLabel);
+                                        const weekNum = getWeekNumber(date);
+                                        const month = getMonthName(date);
+                                        const timeMinutes = convertTimeToMinutes(timeSpent);
+                                        const timeHours = convertMinutesToHours(timeMinutes);
+
+                                        const processedRow = [
+                                            escapeCSVField(date),
+                                            escapeCSVField(weekNum),
+                                            escapeCSVField(month),
+                                            escapeCSVField(username),
+                                            escapeCSVField(handleEmptyValue(auxLabels['Aux L1'])),
+                                            escapeCSVField(handleEmptyValue(auxLabels['Aux L2'])),
+                                            escapeCSVField(handleEmptyValue(auxLabels['Aux L3'])),
+                                            escapeCSVField(handleEmptyValue(projectTitle)),
+                                            escapeCSVField(handleEmptyValue(relatedAudits)),
+                                            escapeCSVField(handleEmptyValue(areYouPL)),
+                                            escapeCSVField(handleEmptyValue(comment)),
+                                            escapeCSVField(timeMinutes),
+                                            escapeCSVField(timeHours),
+                                            escapeCSVField(site)
+                                        ].join(',');
+
+                                        relevantData.add(processedRow);
+                                    }
+                                } catch (dateError) {
+                                    console.error('Error processing date:', dateError);
+                                    continue;
+                                }
+                            }
+                        } catch (fileError) {
+                            console.error(`Error processing file ${item.Key}:`, fileError);
+                            continue;
+                        }
+                    }
+                } catch (prefixError) {
+                    console.error(`Error processing prefix ${prefix}:`, prefixError);
+                    continue;
+                }
             }
-        }
-    } catch (prefixError) {
-        console.error(`Error processing prefix ${prefix}:`, prefixError);
-        continue;
-    }
-}
 
             if (relevantData.size === 0) {
                 SharedFunctions.showCustomAlert('No data found for the selected date range.');
@@ -3178,6 +3244,7 @@ for (const prefix of prefixes) {
         SharedFunctions.showCustomAlert('Failed to retrieve full data');
     }
 }
+
 
 function processCSVData(csvContent) {
     const lines = csvContent.split(/\r?\n/);
