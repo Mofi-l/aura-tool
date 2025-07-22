@@ -2838,6 +2838,25 @@ async function checkAuthorization(username) {
     }
 }
 
+async function listAllObjects(s3, bucketName, prefix) {
+    let objects = [];
+    let continuationToken = null;
+    
+    do {
+        const params = {
+            Bucket: bucketName,
+            Prefix: prefix,
+            ContinuationToken: continuationToken
+        };
+        
+        const response = await s3.listObjectsV2(params).promise();
+        objects = objects.concat(response.Contents || []);
+        continuationToken = response.NextContinuationToken;
+    } while (continuationToken);
+    
+    return objects;
+}
+
 async function getFullData() {
     const currentUsername = localStorage.getItem("currentUsername");
 
@@ -3021,94 +3040,93 @@ await new Promise((resolve, reject) => {
             // Load MS_Sites mapping
             const siteMap = await loadMSSitesData();
 
-            for (const prefix of prefixes) {
-                try {
-                    const listedObjects = await s3.listObjectsV2({
-                        Bucket: bucketName,
-                        Prefix: prefix
-                    }).promise();
+for (const prefix of prefixes) {
+    try {
+        const listedObjects = await listAllObjects(s3, bucketName, prefix);
+        console.log(`Found ${listedObjects.length} files with prefix ${prefix}`);
 
-                    console.log(`Found ${listedObjects.Contents.length} files with prefix ${prefix}`);
+        for (const item of listedObjects) {
+            try {
+                const fileData = await s3.getObject({
+                    Bucket: bucketName,
+                    Key: item.Key
+                }).promise();
 
-                    for (const item of listedObjects.Contents) {
-                        try {
-                            const fileData = await s3.getObject({
-                                Bucket: bucketName,
-                                Key: item.Key
-                            }).promise();
+                const fileContent = fileData.Body.toString('utf-8');
+                const lines = fileContent.split(/\r?\n/);
+                const headers = lines[0].split(',').map(h => h.trim());
 
-                            const fileContent = fileData.Body.toString('utf-8');
-                            const processedData = processCSVData(fileContent);
+                for (let i = 1; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (!line) continue;
 
-                            for (const row of processedData) {
-                                if (row.length >= 4) {
-                                    try {
-                                        const date = row[0];
+                    const row = parseCSVLine(line);
+                    if (row.length < headers.ls.length) continue;
 
-                                        // Skip rows without a valid date
-                                        if (!date || date.trim() === '') {
-                                            continue;
-                                        }
+                    const rowData = {};
+                    headers.forEach((header, index) => {
+                        rowData[header] = row[index] || '';
+                    });
 
-                                        const rowDate = new Date(date).getTime();
+                    try {
+                        const date = rowData['Date'];
+                        if (!date || date.trim() === '') continue;
 
-                                        if (rowDate >= dateRange.startDateTime &&
-                                            rowDate <= dateRange.endDateTime) {
+                        const rowDate = new Date(date).getTime();
+                        if (rowDate >= dateRange.startDateTime && rowDate <= dateRange.endDateTime) {
+                            const username = rowData['Username'] || 'N/A';
+                            const auxLabel = rowData['AUX Label'] || 'N/A';
+                            const timeSpent = formatTimeSpent(rowData['Time Spent']);
+                            
+                            // Skip invalid time entries
+                            if (timeSpent === '00:00:00' || timeSpent === '0.00') continue;
 
-                                            const username = row[1] || 'N/A';
-                                            const auxLabel = row[2] || 'N/A';
-                                            const timeSpent = formatTimeSpent(row[3]);
-                                            const projectTitle = row[4] || 'N/A';
-                                            const relatedAudits = row[5] ?
-                                                row[5].replace(/[^\d]/g, '') : 'N/A';
-                                            const areYouPL = validateAreYouPL(row[6]);
-                                            const comment = row[7] || 'N/A';
-                                            const site = handleEmptyValue(siteMap[username] || 'N/A');
+                            const projectTitle = rowData['Project Title'] || 'N/A';
+                            const relatedAudits = rowData['Related Audits'] || 'N/A';
+                            const areYouPL = validateAreYouPL(rowData['Are You the PL?']);
+                            const comment = rowData['Comment'] || 'N/A';
+                            const site = handleEmptyValue(siteMap[username] || 'N/A');
 
-                                            // Skip rows with 00:00:00 time spent
-                                            if (timeSpent === '00:00:00') continue;
+                            const auxLabels = splitAuxLabel(auxLabel);
+                            const weekNum = getWeekNumber(date);
+                            const month = getMonthName(date);
+                            const timeMinutes = convertTimeToMinutes(timeSpent);
+                            const timeHours = convertMinutesToHours(timeMinutes);
 
-                                            const auxLabels = splitAuxLabel(auxLabel);
-                                            const weekNum = getWeekNumber(date);
-                                            const month = getMonthName(date);
-                                            const timeMinutes = convertTimeToMinutes(timeSpent);
-                                            const timeHours = convertMinutesToHours(timeMinutes);
+                            const processedRow = [
+                                escapeCSVField(date),
+                                escapeCSVField(weekNum),
+                                escapeCSVField(month),
+                                escapeCSVField(username),
+                                escapeCSVField(handleEmptyValue(auxLabels['Aux L1'])),
+                                escapeCSVField(handleEmptyValue(auxLabels['Aux L2'])),
+                                escapeCSVField(handleEmptyValue(auxLabels['Aux L3'])),
+                                escapeCSVField(handleEmptyValue(projectTitle)),
+                                escapeCSVField(handleEmptyValue(relatedAudits)),
+                                escapeCSVField(handleEmptyValue(areYouPL)),
+                                escapeCSVField(handleEmptyValue(comment)),
+                                escapeCSVField(timeMinutes),
+                                escapeCSVField(timeHours),
+                                escapeCSVField(site)
+                            ].join(',');
 
-                                            const processedRow = [
-                                                escapeCSVField(date),
-                                                escapeCSVField(weekNum),
-                                                escapeCSVField(month),
-                                                escapeCSVField(username),
-                                                escapeCSVField(handleEmptyValue(auxLabels['Aux L1'])),
-                                                escapeCSVField(handleEmptyValue(auxLabels['Aux L2'])),
-                                                escapeCSVField(handleEmptyValue(auxLabels['Aux L3'])),
-                                                escapeCSVField(handleEmptyValue(projectTitle)),
-                                                escapeCSVField(handleEmptyValue(relatedAudits)),
-                                                escapeCSVField(handleEmptyValue(areYouPL)),
-                                                escapeCSVField(handleEmptyValue(comment)),
-                                                escapeCSVField(timeMinutes),
-                                                escapeCSVField(timeHours),
-                                                escapeCSVField(site)
-                                            ].join(',');
-
-                                            relevantData.add(processedRow);
-                                        }
-                                    } catch (dateError) {
-                                        console.error('Error processing date for row:', row, dateError);
-                                        continue;
-                                    }
-                                }
-                            }
-                        } catch (fileError) {
-                            console.error(`Error processing file ${item.Key}:`, fileError);
-                            continue;
+                            relevantData.add(processedRow);
                         }
+                    } catch (dateError) {
+                        console.error('Error processing date:', dateError);
+                        continue;
                     }
-                } catch (prefixError) {
-                    console.error(`Error processing prefix ${prefix}:`, prefixError);
-                    continue;
                 }
+            } catch (fileError) {
+                console.error(`Error processing file ${item.Key}:`, fileError);
+                continue;
             }
+        }
+    } catch (prefixError) {
+        console.error(`Error processing prefix ${prefix}:`, prefixError);
+        continue;
+    }
+}
 
             if (relevantData.size === 0) {
                 SharedFunctions.showCustomAlert('No data found for the selected date range.');
@@ -3255,22 +3273,24 @@ function splitAuxLabel(auxLabel) {
 function formatTimeSpent(timeValue) {
     if (!timeValue) return '00:00:00';
 
-    // If it's already in HH:MM:SS format, return as is
+    // Handle milliseconds format
+    if (typeof timeValue === 'number' || !isNaN(timeValue)) {
+        const numericValue = parseInt(timeValue.toString().replace(/[^\d]/g, ''), 10);
+        if (numericValue) {
+            const totalMinutes = (numericValue / 1000) / 60;
+            const hours = Math.floor(totalMinutes / 60);
+            const minutes = Math.floor(totalMinutes % 60);
+            const seconds = Math.floor((totalMinutes * 60) % 60);
+            return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        }
+    }
+
+    // If it's already in HH:MM:SS format
     if (/^\d{1,2}:\d{2}:\d{2}$/.test(timeValue)) {
         return timeValue;
     }
 
-    // If it's a number (assuming minutes), convert to HH:MM:SS
-    const numericValue = parseFloat(timeValue);
-    if (!isNaN(numericValue)) {
-        const hours = Math.floor(numericValue / 60);
-        const minutes = Math.floor(numericValue % 60);
-        const seconds = Math.floor((numericValue * 60) % 60);
-
-        return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-    }
-
-    // If it's neither a valid time string nor a number, return '00:00:00'
+    // Default case
     return '00:00:00';
 }
 
