@@ -1702,119 +1702,119 @@ body {
             <div style="text-align: center; padding: 20px;">
                 No AUX Data available. Please refresh the page or view from a different page.
             </div>`;
-        if (showTable) {
-            popupContainer.style.display = 'block';
-        }
-        return;
-    }
+                    if (showTable) {
+                        popupContainer.style.display = 'block';
+                    }
+                    return;
+                }
 
-    const controlPanel = document.createElement('div');
-    controlPanel.style.marginBottom = '15px';
-    controlPanel.style.display = 'flex';
-    controlPanel.style.justifyContent = 'space-between';
-    controlPanel.style.alignItems = 'center';
+                const controlPanel = document.createElement('div');
+                controlPanel.style.marginBottom = '15px';
+                controlPanel.style.display = 'flex';
+                controlPanel.style.justifyContent = 'space-between';
+                controlPanel.style.alignItems = 'center';
 
-    const saveButton = document.createElement('button');
-    saveButton.textContent = 'Save All Changes';
-    saveButton.style.padding = '8px 16px';
-    saveButton.style.backgroundColor = '#28a745';
-    saveButton.style.color = 'white';
-    saveButton.style.border = 'none';
-    saveButton.style.borderRadius = '4px';
-    saveButton.style.cursor = 'pointer';
-    saveButton.style.display = 'none';
+                const saveButton = document.createElement('button');
+                saveButton.textContent = 'Save All Changes';
+                saveButton.style.padding = '8px 16px';
+                saveButton.style.backgroundColor = '#28a745';
+                saveButton.style.color = 'white';
+                saveButton.style.border = 'none';
+                saveButton.style.borderRadius = '4px';
+                saveButton.style.cursor = 'pointer';
+                saveButton.style.display = 'none';
 
-    let isEditing = false;
+                let isEditing = false;
 
-    const tableContainer = document.createElement('div');
-    tableContainer.style.overflowX = 'auto';
-    tableContainer.style.width = '100%';
+                const tableContainer = document.createElement('div');
+                tableContainer.style.overflowX = 'auto';
+                tableContainer.style.width = '100%';
 
-    const table = document.createElement('table');
-    table.style.width = '100%';
-    table.style.borderCollapse = 'collapse';
-    table.style.marginTop = '10px';
-    table.style.backgroundColor = '#ffffff';
+                const table = document.createElement('table');
+                table.style.width = '100%';
+                table.style.borderCollapse = 'collapse';
+                table.style.marginTop = '10px';
+                table.style.backgroundColor = '#ffffff';
 
-    const headers = [
-        'Date',
-        'Username',
-        'AUX Label',
-        'Time Spent',
-        'Project Title',
-        'Related Audits',
-        'Are You PL',
-        'Comment'
-    ];
+                const headers = [
+                    'Date',
+                    'Username',
+                    'AUX Label',
+                    'Time Spent',
+                    'Project Title',
+                    'Related Audits',
+                    'Are You PL',
+                    'Comment'
+                ];
 
-    const headerRow = table.insertRow();
-    headers.forEach(headerText => {
-        const header = document.createElement('th');
-        header.textContent = headerText;
-        header.style.padding = '12px';
-        header.style.backgroundColor = '#f8f9fa';
-        header.style.borderBottom = '2px solid #dee2e6';
-        header.style.color = '#495057';
-        header.style.fontWeight = 'bold';
-        header.style.textAlign = 'left';
-        headerRow.appendChild(header);
-    });
+                const headerRow = table.insertRow();
+                headers.forEach(headerText => {
+                    const header = document.createElement('th');
+                    header.textContent = headerText;
+                    header.style.padding = '12px';
+                    header.style.backgroundColor = '#f8f9fa';
+                    header.style.borderBottom = '2px solid #dee2e6';
+                    header.style.color = '#495057';
+                    header.style.fontWeight = 'bold';
+                    header.style.textAlign = 'left';
+                    headerRow.appendChild(header);
+                });
 
-    function toggleEditMode() {
-        isEditing = !isEditing;
-        saveButton.style.display = isEditing ? 'block' : 'none';
+                function toggleEditMode() {
+                    isEditing = !isEditing;
+                    saveButton.style.display = isEditing ? 'block' : 'none';
 
-        const inputs = table.getElementsByTagName('input');
-        for (let input of inputs) {
-            input.readOnly = !isEditing;
-            input.style.backgroundColor = isEditing ? '#ffffff' : '#f8f9fa';
-            input.style.border = isEditing ? '1px solid #ced4da' : 'none';
-        }
-    }
+                    const inputs = table.getElementsByTagName('input');
+                    for (let input of inputs) {
+                        input.readOnly = !isEditing;
+                        input.style.backgroundColor = isEditing ? '#ffffff' : '#f8f9fa';
+                        input.style.border = isEditing ? '1px solid #ced4da' : 'none';
+                    }
+                }
 
-    saveButton.onclick = () => saveAllChanges(table, auxData);
+                saveButton.onclick = () => saveAllChanges(table, auxData);
 
-    auxData.forEach((entry, index) => {
-        const row = table.insertRow();
-        row.style.borderBottom = '1px solid #dee2e6';
+                auxData.forEach((entry, index) => {
+                    const row = table.insertRow();
+                    row.style.borderBottom = '1px solid #dee2e6';
 
-        headers.forEach(header => {
-            const cell = row.insertCell();
-            cell.style.padding = '12px';
+                    headers.forEach(header => {
+                        const cell = row.insertCell();
+                        cell.style.padding = '12px';
 
-            const key = header.toLowerCase()
-            .replace(/ /g, '')
-            .replace('areyoupl', 'areYouPL')
-            .replace('auxlabel', 'auxLabel')
-            .replace('relatedaudits', 'relatedAudits')
-            .replace('timespent', 'timeSpent')
-            .replace('projecttitle', 'projectTitle');
+                        const key = header.toLowerCase()
+                        .replace(/ /g, '')
+                        .replace('areyoupl', 'areYouPL')
+                        .replace('auxlabel', 'auxLabel')
+                        .replace('relatedaudits', 'relatedAudits')
+                        .replace('timespent', 'timeSpent')
+                        .replace('projecttitle', 'projectTitle');
 
-            if (key === 'date' || key === 'username') {
-                cell.textContent = entry[key] || 'N/A';
-            } else {
-                const input = document.createElement('input');
-                input.type = 'text';
-                input.value = key === 'timeSpent' ?
-                    formatTime(entry[key] || 0) :
-                (entry[key] || '');
-                input.readOnly = true;
-                input.style.width = '100%';
-                input.style.padding = '6px';
-                input.style.border = 'none';
-                input.style.backgroundColor = '#f8f9fa';
-                input.style.borderRadius = '4px';
-                input.style.boxSizing = 'border-box';
-                cell.appendChild(input);
-            }
-        });
-    });
+                        if (key === 'date' || key === 'username') {
+                            cell.textContent = entry[key] || 'N/A';
+                        } else {
+                            const input = document.createElement('input');
+                            input.type = 'text';
+                            input.value = key === 'timeSpent' ?
+                                formatTime(entry[key] || 0) :
+                            (entry[key] || '');
+                            input.readOnly = true;
+                            input.style.width = '100%';
+                            input.style.padding = '6px';
+                            input.style.border = 'none';
+                            input.style.backgroundColor = '#f8f9fa';
+                            input.style.borderRadius = '4px';
+                            input.style.boxSizing = 'border-box';
+                            cell.appendChild(input);
+                        }
+                    });
+                });
 
-    popupContainer.innerHTML = '';
+                popupContainer.innerHTML = '';
 
-    // Informative message
-    const infoMessage = document.createElement('div');
-    infoMessage.style.cssText = `
+                // Informative message
+                const infoMessage = document.createElement('div');
+                infoMessage.style.cssText = `
     background: rgba(25, 118, 210, 0.1);
     border-left: 4px solid #1976d2;
     padding: 16px;
@@ -1828,69 +1828,69 @@ body {
     gap: 12px;
 `;
 
-    const infoIcon = document.createElement('span');
-    infoIcon.innerHTML = '&#9432;';
-    infoIcon.style.cssText = `
+                const infoIcon = document.createElement('span');
+                infoIcon.innerHTML = '&#9432;';
+                infoIcon.style.cssText = `
     font-size: 20px;
     color: #: #1976d2;
 `;
 
-    const messageText = document.createElement('span');
-    messageText.textContent = 'This table displays your current NPT data for the day. Please note that this data is read-only and cannot be modified directly. Click the Export to AWS button below to send your NPT data';
+                const messageText = document.createElement('span');
+                messageText.textContent = 'This table displays your current NPT data for the day. Please note that this data is read-only and cannot be modified directly. Click the Export to AWS button below to send your NPT data';
 
-    infoMessage.appendChild(infoIcon);
-    infoMessage.appendChild(messageText);
+                infoMessage.appendChild(infoIcon);
+                infoMessage.appendChild(messageText);
 
-    // Add Export to AWS button above the table
-    const exportToAWSButton = document.createElement('img');
-    exportToAWSButton.id = 'exportToAWSButton';
-    exportToAWSButton.src = 'https://raw.githubusercontent.com/Mofi-l/static-images/main/cloud-computing.png';
-    exportToAWSButton.alt = 'Export to AWS';
-    exportToAWSButton.title = 'Export to AWS';
-    exportToAWSButton.style.width = '30px';
-    exportToAWSButton.style.height = '30px';
-    exportToAWSButton.style.cursor = 'pointer';
-    exportToAWSButton.style.margin = '0 0 10px 0';
-    exportToAWSButton.onclick = exportToAWS;
+                // Add Export to AWS button above the table
+                const exportToAWSButton = document.createElement('img');
+                exportToAWSButton.id = 'exportToAWSButton';
+                exportToAWSButton.src = 'https://raw.githubusercontent.com/Mofi-l/static-images/main/cloud-computing.png';
+                exportToAWSButton.alt = 'Export to AWS';
+                exportToAWSButton.title = 'Export to AWS';
+                exportToAWSButton.style.width = '30px';
+                exportToAWSButton.style.height = '30px';
+                exportToAWSButton.style.cursor = 'pointer';
+                exportToAWSButton.style.margin = '0 0 10px 0';
+                exportToAWSButton.onclick = exportToAWS;
 
-    const closeButton = document.createElement('button');
-    closeButton.textContent = '×';
-    closeButton.style.position = 'absolute';
-    closeButton.style.right = '10px';
-    closeButton.style.top = '10px';
-    closeButton.style.border = 'none';
-    closeButton.style.background = 'none';
-    closeButton.style.fontSize = '20px';
-    closeButton.style.cursor = 'pointer';
-    closeButton.onclick = () => {
-        popupContainer.style.display = 'none';
-    };
+                const closeButton = document.createElement('button');
+                closeButton.textContent = '×';
+                closeButton.style.position = 'absolute';
+                closeButton.style.right = '10px';
+                closeButton.style.top = '10px';
+                closeButton.style.border = 'none';
+                closeButton.style.background = 'none';
+                closeButton.style.fontSize = '20px';
+                closeButton.style.cursor = 'pointer';
+                closeButton.onclick = () => {
+                    popupContainer.style.display = 'none';
+                };
 
-    if (localStorage.getItem('dataModified') === 'true') {
-        const modifiedIndicator = document.createElement('div');
-        modifiedIndicator.style.color = '#ff9800';
-        modifiedIndicator.style.padding = '10px';
-        modifiedIndicator.style.marginBottom = '10px';
-        modifiedIndicator.style.backgroundColor = '#fff3e0';
-        modifiedIndicator.style.borderRadius = '4px';
-        modifiedIndicator.textContent = '* This data contains manual modifications';
-        popupContainer.appendChild(modifiedIndicator);
-    }
+                if (localStorage.getItem('dataModified') === 'true') {
+                    const modifiedIndicator = document.createElement('div');
+                    modifiedIndicator.style.color = '#ff9800';
+                    modifiedIndicator.style.padding = '10px';
+                    modifiedIndicator.style.marginBottom = '10px';
+                    modifiedIndicator.style.backgroundColor = '#fff3e0';
+                    modifiedIndicator.style.borderRadius = '4px';
+                    modifiedIndicator.textContent = '* This data contains manual modifications';
+                    popupContainer.appendChild(modifiedIndicator);
+                }
 
-    popupContainer.appendChild(infoMessage);
-    controlPanel.appendChild(saveButton);
-    popupContainer.appendChild(exportToAWSButton);
-    popupContainer.appendChild(closeButton);
-    popupContainer.appendChild(controlPanel);
-    tableContainer.appendChild(table);
-    popupContainer.appendChild(tableContainer);
+                popupContainer.appendChild(infoMessage);
+                controlPanel.appendChild(saveButton);
+                popupContainer.appendChild(exportToAWSButton);
+                popupContainer.appendChild(closeButton);
+                popupContainer.appendChild(controlPanel);
+                tableContainer.appendChild(table);
+                popupContainer.appendChild(tableContainer);
 
-    if (showTable) {
-        popupContainer.style.display = 'block';
-    } else {
-        popupContainer.style.display = 'none';
-    }
-}
+                if (showTable) {
+                    popupContainer.style.display = 'block';
+                } else {
+                    popupContainer.style.display = 'none';
+                }
+            }
 
             function saveAllChanges(table, auxData) {
                 SharedFunctions.showCustomConfirm('Are you sure you want to save all changes?', (confirmed) => {
@@ -8605,34 +8605,21 @@ ${update.isPaused ? `Paused Since: ${new Date(update.pauseTime).toLocaleString()
                         return;
                     }
 
-                    isPaused = !isPaused;
-                    const pauseButton = document.getElementById('pause-button');
                     const currentTime = Date.now();
+                    auxState.isPaused = !auxState.isPaused;
 
-                    if (isPaused) {
-                        // Storing pause time
+                    if (auxState.isPaused) {
                         auxState.pauseTime = currentTime;
-                        auxState.isPaused = true;
                         auxState.status = 'paused';
-                        pauseButton.textContent = 'Resume';
-                        pauseButton.style.backgroundColor = '#FFA500';
-
-                        // Cancel any existing animation frame
                         if (animationFrameId) {
                             cancelAnimationFrame(animationFrameId);
                             animationFrameId = null;
                         }
                     } else {
-                        // Calculate pause duration and update total
                         const pauseDuration = currentTime - (auxState.pauseTime || currentTime);
                         auxState.totalPauseDuration = (auxState.totalPauseDuration || 0) + pauseDuration;
                         delete auxState.pauseTime;
-                        auxState.isPaused = false;
                         auxState.status = 'active';
-                        pauseButton.textContent = 'Pause';
-                        pauseButton.style.backgroundColor = '#4CAF50';
-
-                        // Restart timer animation
                         const timerElement = document.getElementById('aux-timer');
                         if (timerElement) {
                             requestAnimationFrame(() => updateTimer(auxState.startTime, auxState.auxLabel, timerElement));
@@ -8644,12 +8631,19 @@ ${update.isPaused ? `Paused Since: ${new Date(update.pauseTime).toLocaleString()
                     localStorage.setItem('auxState', JSON.stringify(auxState));
 
                     // Update UI elements
-                    updateUIForPauseState(isPaused, auxState);
+                    updateUIForPauseState(auxState.isPaused, auxState);
+
+                    // Update pause button
+                    const pauseButton = document.getElementById('pause-button');
+                    if (pauseButton) {
+                        pauseButton.textContent = auxState.isPaused ? 'Resume' : 'Pause';
+                        pauseButton.style.backgroundColor = auxState.isPaused ? '#FFA500' : '#4CAF50';
+                    }
 
                     // Broadcast state change
                     window.dispatchEvent(new CustomEvent('auxStateChange', {
                         detail: {
-                            isPaused,
+                            isPaused: auxState.isPaused,
                             auxState,
                             timestamp: currentTime
                         }
@@ -8668,7 +8662,6 @@ ${update.isPaused ? `Paused Since: ${new Date(update.pauseTime).toLocaleString()
                     SharedFunctions.showCustomAlert('Error updating pause state');
                 }
             }
-
 
             // Add event listener for state changes
             window.addEventListener('auxStateChange', async (event) => {
@@ -8873,6 +8866,8 @@ ${update.isPaused ? `Paused Since: ${new Date(update.pauseTime).toLocaleString()
                 auxState.currentTime = elapsedTime;
                 auxState.lastUpdate = currentTime;
                 localStorage.setItem('auxState', JSON.stringify(auxState));
+
+                animationFrameId = requestAnimationFrame(() => updateTimer(startTime, auxLabel, timerElement));
 
                 // Continue animation frame only if not paused
                 if (!auxState.isPaused) {
@@ -9307,8 +9302,8 @@ ${auxState.startTime ? `Started: ${new Date(auxState.startTime).toLocaleTimeStri
 
                 if (prevState && prevState.auxLabel !== newAuxLabel) {
                     const timeSpent = prevState.isPaused ?
-                          calculateTimeSpent(prevState.startTime, prevState.pauseTime) :
-                    calculateTimeSpent(prevState.startTime);
+                          (prevState.pauseTime - prevState.startTime) - (prevState.totalPauseDuration || 0) :
+                    (now - prevState.startTime) - (prevState.totalPauseDuration || 0);
 
                     await saveAUXData({
                         auxLabel: prevState.auxLabel,
@@ -9323,19 +9318,24 @@ ${auxState.startTime ? `Started: ${new Date(auxState.startTime).toLocaleTimeStri
 
                 if (!prevState || prevState.auxLabel !== newAuxLabel) {
                     cleanupTimer();
-                    startAUXTimer(newAuxLabel);
 
-                    // Create new state with preserved pause duration
+                    // Create new state
                     const newState = {
                         auxLabel: newAuxLabel,
                         startTime: now,
                         timestamp: now,
                         isPaused: false,
-                        totalPauseDuration: currentTotalPauseDuration // Preserve the total pause duration
+                        totalPauseDuration: 0 // Reset pause duration for new AUX
                     };
 
                     // Store the new state
                     localStorage.setItem('auxState', JSON.stringify(newState));
+
+                    // Start the timer immediately
+                    const timerElement = displayTimer();
+                    if (timerElement) {
+                        updateTimer(now, newAuxLabel, timerElement);
+                    }
                 }
 
                 // Ensure pause duration is maintained when going offline
