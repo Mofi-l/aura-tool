@@ -2265,44 +2265,44 @@ body {
                                               `${entry.date},${entry.username},${entry.auxLabel},${entry.timeSpent},${entry.projectTitle || ''},${entry.relatedAudits || ''},${entry.areYouPL ? `"${entry.areYouPL}"` : ''},${entry.comment ? `"${entry.comment}"` : ''}`
                     ).join('\n');
 
-                            console.log('CSV Content:', csvContent);
+                                console.log('CSV Content:', csvContent);
 
-                            const response = await fetch('https://09umyreyjb.execute-api.eu-north-1.amazonaws.com/Prod/auxData', {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'text/csv',
-                                    Authorization: token,
-                                },
-                                body: csvContent,
-                            });
+                                const response = await fetch('https://09umyreyjb.execute-api.eu-north-1.amazonaws.com/Prod/auxData', {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'text/csv',
+                                        Authorization: token,
+                                    },
+                                    body: csvContent,
+                                });
 
-                            if (!response.ok) {
-                                throw new Error(`Failed to send data: ${response.statusText}`);
+                                if (!response.ok) {
+                                    throw new Error(`Failed to send data: ${response.statusText}`);
+                                }
+
+                                modal.remove();
+                                SharedFunctions.showCustomAlert('NPT Data successfully sent to AWS');
+                                localStorage.setItem('isDataSent', 'true');
+                            } catch (error) {
+                                console.error('Error during AWS export:', error);
+                                submitBtn.textContent = 'Submit';
+                                submitBtn.style.opacity = '1';
+                                submitBtn.disabled = false;
+                                SharedFunctions.showCustomAlert('Failed to export NPT data. Please check your credentials or try again later.');
                             }
 
-                            modal.remove();
-                            SharedFunctions.showCustomAlert('NPT Data successfully sent to AWS');
-                            localStorage.setItem('isDataSent', 'true');
-                        } catch (error) {
-                            console.error('Error during AWS export:', error);
-                            submitBtn.textContent = 'Submit';
-                            submitBtn.style.opacity = '1';
-                            submitBtn.disabled = false;
-                            SharedFunctions.showCustomAlert('Failed to export NPT data. Please check your credentials or try again later.');
-                        }
-
-                        resolve();
-                    });
-
-                    document.getElementById('auth-cancel').addEventListener('click', () => {
-                        const authModal = modal.querySelector('.auth-modal');
-                        authModal.style.opacity = '0';
-                        setTimeout(() => {
-                            modal.remove();
                             resolve();
-                        }, 300);
+                        });
+
+                        document.getElementById('auth-cancel').addEventListener('click', () => {
+                            const authModal = modal.querySelector('.auth-modal');
+                            authModal.style.opacity = '0';
+                            setTimeout(() => {
+                                modal.remove();
+                                resolve();
+                            }, 300);
+                        });
                     });
-                });
             }
             ///////////////////////////////////////////////////////////////
             // Import from AWS
@@ -3724,25 +3724,25 @@ body {
                         </div>
                     `;
 
-                            if (matchCount === 0) {
-                                SharedFunctions.showCustomAlert('No matching projects found');
-                            }
+                                if (matchCount === 0) {
+                                    SharedFunctions.showCustomAlert('No matching projects found');
+                                }
 
-                        } catch (error) {
-                            console.error('Search error:', error);
-                            if (error.code === 'CredentialsError' || error.message.includes('credentials')) {
-                                // Clear stored credentials if they're invalid
-                                localStorage.removeItem('lastAuthUsername');
-                                localStorage.removeItem('lastAuthPassword');
-                                SharedFunctions.showCustomAlert('Authentication expired. Please try again.');
-                            } else {
-                                SharedFunctions.showCustomAlert('Error searching project data');
+                            } catch (error) {
+                                console.error('Search error:', error);
+                                if (error.code === 'CredentialsError' || error.message.includes('credentials')) {
+                                    // Clear stored credentials if they're invalid
+                                    localStorage.removeItem('lastAuthUsername');
+                                    localStorage.removeItem('lastAuthPassword');
+                                    SharedFunctions.showCustomAlert('Authentication expired. Please try again.');
+                                } else {
+                                    SharedFunctions.showCustomAlert('Error searching project data');
+                                }
+                            } finally {
+                                searchBtn.innerHTML = 'Search';
+                                searchBtn.disabled = false;
                             }
-                        } finally {
-                            searchBtn.innerHTML = 'Search';
-                            searchBtn.disabled = false;
-                        }
-                    };
+                        };
 
                 } catch (error) {
                     console.error('Initialization error:', error);
@@ -6054,82 +6054,82 @@ body {
             </div>
         `;
 
-                    // AUX Label cell with pause indicator
-                    const auxCell = row.insertCell();
-                    const auxLabel = determineAuxLevel(update.auxLabel);
-                    auxCell.textContent = auxLabel;
-                    if (update.isPaused) {
-                        const pauseIndicator = document.createElement('span');
-                        pauseIndicator.innerHTML = '⏸️';
-                        pauseIndicator.title = 'AUX Paused';
-                        pauseIndicator.style.opacity = '0.7';
-                        auxCell.appendChild(pauseIndicator);
-                    }
-
-                    // Time cell with pause handling
-                    const timeCell = row.insertCell();
-                    const timerId = `timer-${update.username}-${index}`;
-                    timeCell.id = timerId;
-                    updateTimerDashboard(timeCell, update);
-
-                    // Status cell with enhanced pause state
-                    const statusCell = row.insertCell();
-                    updateStatusCell(statusCell, status);
-                    if (update.isPaused) {
-                        statusCell.style.color = '#FFA500';
-                        statusCell.style.fontWeight = 'bold';
-                    }
-
-                    // Last Update cell
-                    const lastUpdateCell = row.insertCell();
-                    lastUpdateCell.textContent = new Date(update.lastUpdate).toLocaleTimeString();
-
-                    // Calculate and display total pause duration
-                    const pauseTimeCell = row.insertCell();
-                    const totalPause = update.totalPauseDuration || 0;
-                    pauseTimeCell.textContent = formatTime(totalPause);
-
-                    // Add cells for login time
-                    const loginTimeCell = row.insertCell();
-                    const storedLoginTime = localStorage.getItem('dailyLoginTime');
-                    loginTimeCell.textContent = storedLoginTime ?
-                        new Date(storedLoginTime).toLocaleTimeString() :
-                    new Date(update.loginTime).toLocaleTimeString();
-
-                    // Add logout time if exists
-                    const logoutTimeCell = row.insertCell();
-                    const storedLogoutTime = localStorage.getItem('dailyLogoutTime');
-                    logoutTimeCell.textContent = storedLogoutTime ?
-                        new Date(storedLogoutTime).toLocaleTimeString() :
-                    (update.logoutTime ? new Date(update.logoutTime).toLocaleTimeString() : 'Active');
-
-                    // Visual indicators for paused state
-                    if (update.isPaused) {
-                        row.style.opacity = '0.85';
-                        row.style.backgroundColor = 'rgba(255, 165, 0, 0.05)';
-                        row.style.borderLeft = '3px solid #FFA500';
-                        row.style.animation = 'pausePulse 2s infinite';
-
-                        // Update time cell for paused state
-                        timeCell.style.color = '#FFA500';
-                        timeCell.style.fontWeight = 'bold';
-                        if (!timeCell.textContent.includes('(Paused)')) {
-                            timeCell.innerHTML = `${timeCell.textContent} <span style="color: #FFA500;">(Paused)</span>`;
+                        // AUX Label cell with pause indicator
+                        const auxCell = row.insertCell();
+                        const auxLabel = determineAuxLevel(update.auxLabel);
+                        auxCell.textContent = auxLabel;
+                        if (update.isPaused) {
+                            const pauseIndicator = document.createElement('span');
+                            pauseIndicator.innerHTML = '⏸️';
+                            pauseIndicator.title = 'AUX Paused';
+                            pauseIndicator.style.opacity = '0.7';
+                            auxCell.appendChild(pauseIndicator);
                         }
-                    }
 
-                    // Enhanced hover information
-                    row.title = `Last Updated: ${new Date(update.lastUpdate).toLocaleString()}
+                        // Time cell with pause handling
+                        const timeCell = row.insertCell();
+                        const timerId = `timer-${update.username}-${index}`;
+                        timeCell.id = timerId;
+                        updateTimerDashboard(timeCell, update);
+
+                        // Status cell with enhanced pause state
+                        const statusCell = row.insertCell();
+                        updateStatusCell(statusCell, status);
+                        if (update.isPaused) {
+                            statusCell.style.color = '#FFA500';
+                            statusCell.style.fontWeight = 'bold';
+                        }
+
+                        // Last Update cell
+                        const lastUpdateCell = row.insertCell();
+                        lastUpdateCell.textContent = new Date(update.lastUpdate).toLocaleTimeString();
+
+                        // Calculate and display total pause duration
+                        const pauseTimeCell = row.insertCell();
+                        const totalPause = update.totalPauseDuration || 0;
+                        pauseTimeCell.textContent = formatTime(totalPause);
+
+                        // Add cells for login time
+                        const loginTimeCell = row.insertCell();
+                        const storedLoginTime = localStorage.getItem('dailyLoginTime');
+                        loginTimeCell.textContent = storedLoginTime ?
+                            new Date(storedLoginTime).toLocaleTimeString() :
+                        new Date(update.loginTime).toLocaleTimeString();
+
+                        // Add logout time if exists
+                        const logoutTimeCell = row.insertCell();
+                        const storedLogoutTime = localStorage.getItem('dailyLogoutTime');
+                        logoutTimeCell.textContent = storedLogoutTime ?
+                            new Date(storedLogoutTime).toLocaleTimeString() :
+                        (update.logoutTime ? new Date(update.logoutTime).toLocaleTimeString() : 'Active');
+
+                        // Visual indicators for paused state
+                        if (update.isPaused) {
+                            row.style.opacity = '0.85';
+                            row.style.backgroundColor = 'rgba(255, 165, 0, 0.05)';
+                            row.style.borderLeft = '3px solid #FFA500';
+                            row.style.animation = 'pausePulse 2s infinite';
+
+                            // Update time cell for paused state
+                            timeCell.style.color = '#FFA500';
+                            timeCell.style.fontWeight = 'bold';
+                            if (!timeCell.textContent.includes('(Paused)')) {
+                                timeCell.innerHTML = `${timeCell.textContent} <span style="color: #FFA500;">(Paused)</span>`;
+                            }
+                        }
+
+                        // Enhanced hover information
+                        row.title = `Last Updated: ${new Date(update.lastUpdate).toLocaleString()}
 Total Pause Duration: ${formatTime(totalPause)}
 Status: ${status.charAt(0).toUpperCase() + status.slice(1)}
 ${update.isPaused ? `Paused Since: ${new Date(update.pauseTime).toLocaleString()}` : ''}`;
 
-                    // Add click handler for detailed view
-                    row.style.cursor = 'pointer';
-                    row.addEventListener('click', () => {
-                        showDetailedView(update);
+                        // Add click handler for detailed view
+                        row.style.cursor = 'pointer';
+                        row.addEventListener('click', () => {
+                            showDetailedView(update);
+                        });
                     });
-                });
 
                 console.log('Dashboard UI updated with', updates.length, 'entries');
                 console.log('Current timers:', window.dashboardTimers.length);
@@ -6807,8 +6807,8 @@ ${update.isPaused ? `Paused Since: ${new Date(update.pauseTime).toLocaleString()
                         oninput="this.value = this.value.replace(/[^0-9]/g, '')"
                     >
                     ${!enableAuditCount ?
-                    '<small style="color: #666; display: block; margin-top: 5px;">Audit count is only required after "Conduct Project"</small>'
-                : ''}
+                        '<small style="color: #666; display: block; margin-top: 5px;">Audit count is only required after "Conduct Project"</small>'
+                    : ''}
                 </div>
 
             <div class="input-field">
@@ -8877,6 +8877,7 @@ ${update.isPaused ? `Paused Since: ${new Date(update.pauseTime).toLocaleString()
                 return elapsedTime;
             }
 
+
             // Add this new function
             function updateDashboardTimers() {
                 const dashboardRows = document.querySelectorAll('.dashboard-table tr[data-username]');
@@ -9352,6 +9353,7 @@ ${auxState.startTime ? `Started: ${new Date(auxState.startTime).toLocaleTimeStri
                     await updateDashboardData(true);
                 }
             }
+
 
             SharedFunctions.injectAuthStyles();
             addFileInput();
