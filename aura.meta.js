@@ -8,6 +8,6 @@
 // @require      https://cdnjs.cloudflare.com/ajax/libs/amazon-cognito-identity-js/5.2.1/amazon-cognito-identity.min.js
 // @updateURL    https://raw.githubusercontent.com/Mofi-l/aura-tool/main/aura.meta.js
 // @downloadURL  https://raw.githubusercontent.com/Mofi-l/aura-tool/main/aura.user.js
-// @version      3.0
+// @version      3.01
 // @grant        none
 // ==/UserScript==
