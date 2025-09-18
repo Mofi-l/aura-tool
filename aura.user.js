@@ -606,11 +606,6 @@
             return;
         }
 
-        // Set logout time if it's an offline entry
-        if (entry.auxLabel.toLowerCase().includes('offline')) {
-            setLogoutTime(entry.auxLabel);
-        }
-
         const timeSpentInSeconds = entry.timeSpent / 1000;
 
         function saveUniqueValue(key, value) {
@@ -674,9 +669,6 @@
                     relatedAudits: entry.relatedAudits,
                     areYouPL: entry.areYouPL || localStorage.getItem('areYouPL-' + entry.auxLabel),
                     comment: entry.comment || localStorage.getItem('comment-' + entry.auxLabel),
-                    loginTime: localStorage.getItem('dailyLoginTime'),
-                    logoutTime: localStorage.getItem('dailyLogoutTime'),
-                    exportedTimestamp: new Date().toISOString()
                 });
 
                 localStorage.setItem('auxData', JSON.stringify(auxData));
@@ -713,9 +705,6 @@
                     relatedAudits: entry.relatedAudits,
                     areYouPL: entry.areYouPL || localStorage.getItem('areYouPL-' + entry.auxLabel),
                     comment: entry.comment || localStorage.getItem('comment-' + entry.auxLabel),
-                    loginTime: localStorage.getItem('dailyLoginTime'),
-                    logoutTime: localStorage.getItem('dailyLogoutTime'),
-                    exportedTimestamp: new Date().toISOString()
                 });
 
                 localStorage.setItem('auxData', JSON.stringify(auxData));
@@ -1929,17 +1918,10 @@
 
                     auxData = auxData.filter(entry => entry.auxLabel !== 'undefined - N/A - N/A' && entry.date !== undefined);
 
-                    const csvContent = 'Date,Username,AUX Label,Time Spent,Project Title,Related Audits,' +
-                          'Are You PL,Comment,Is Edited,Edit Reason,Login Time,Logout Time,Exported Timestamp\n' +
+                    const csvContent = 'Date,Username,AUX Label,Time Spent,Project Title,Related Audits,Are You PL,Comment,Is Edited,Edit Reason\n' +
                           auxData.map(entry => {
                               const username = entry.username || "Unknown User";
-                              const logoutTime = entry.auxLabel.toLowerCase().includes('offline') ?
-                                    localStorage.getItem('dailyLogoutTime') : '';
-
-                              return `${entry.date},${username},${entry.auxLabel},${formatTime(entry.timeSpent)},` +
-                                  `${entry.projectTitle},${entry.relatedAudits},${entry.areYouPL || ''},` +
-                                  `${entry.comment || ''},${entry.isEdited},${entry.editReason},` +
-                                  `${entry.loginTime || ''},${logoutTime},${entry.exportedTimestamp}`;
+                              return `${entry.date},${username},${entry.auxLabel},${formatTime(entry.timeSpent)},${entry.projectTitle},${entry.relatedAudits},${entry.areYouPL || ''},${entry.comment || ''},${entry.isEdited},${entry.editReason}`;
                           }).join("\n");
 
                     console.log('CSV Content:', csvContent);
@@ -2780,8 +2762,8 @@
         <div class="loading-text">Please wait...</div>
     `;
 
-        const style = document.createElement('style');
-        style.textContent = `
+            const style = document.createElement('style');
+            style.textContent = `
         .loading-indicator {
             position: fixed;
             top: 50%;
@@ -2816,10 +2798,10 @@
             100% { transform: rotate(360deg); }
         }
     `;
-        document.head.appendChild(style);
+            document.head.appendChild(style);
 
-        return loadingIndicator;
-    }
+            return loadingIndicator;
+        }
 
     function createAuthModal() {
         const modal = document.createElement('div');
@@ -8838,6 +8820,7 @@
         const storedDate = localStorage.getItem('lastLogoutDate');
 
         if (storedDate !== today) {
+            // New day - clear previous logout time
             localStorage.removeItem('dailyLogoutTime');
         }
 
@@ -10664,13 +10647,13 @@
         }
     }
 
+    checkForUpdates();
     setInitialLoginTime();
     resetDailySteppingAwayTime();
     injectAuthStyles();
     addFileInput();
     restoreTimer();
     checkLoginStatus();
-    checkForUpdates();
     ///////////////////////////////////////////////////////////////
     //DOM content loaded
     document.addEventListener('DOMContentLoaded', () => {
@@ -10710,10 +10693,18 @@
             const versionMatch = metaContent.match(/@version\s+(\d+\.\d+)/);
             if (versionMatch) {
                 const latestVersion = versionMatch[1];
-                const currentVersion = GM_info.script.version;
+                const currentVersion = "3.01";
 
                 if (latestVersion > currentVersion) {
-                    showCustomAlert('A new version is available. Tampermonkey will automatically update the script.');
+                    showCustomConfirm(
+                        'A new version is available. Would you like to update now?',
+                        (confirmed) => {
+                            if (confirmed) {
+                                // Open Tampermonkey's update URL
+                                window.location.href = 'https://raw.githubusercontent.com/Mofi-l/aura-tool/main/aura.user.js';
+                            }
+                        }
+                    );
                 }
             }
         } catch (error) {
