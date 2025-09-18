@@ -8,14 +8,14 @@
 // @require      https://cdnjs.cloudflare.com/ajax/libs/amazon-cognito-identity-js/5.2.1/amazon-cognito-identity.min.js
 // @updateURL    https://raw.githubusercontent.com/Mofi-l/aura-tool/main/aura.meta.js
 // @downloadURL  https://raw.githubusercontent.com/Mofi-l/aura-tool/main/aura.user.js
-// @version      3.0
+// @version      3.01
 // @grant        none
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    const currentVersion = "3.0";
+    const currentVersion = "3.01";
     let animationFrameId = null;
     let timerUpdateDebounce = null;
     ///////////////////////////////////////////////////////////////
@@ -201,20 +201,20 @@
         'https://paragon-fe.amazon.com/hz/lobby/v2'
     ];
 
-    if (targetURLs.includes(window.location.href)) {
-        const alreadyOpened = localStorage.getItem('projectDetailsOpened');
-        const confirmationShown = sessionStorage.getItem('projectDetailsConfirmationShown');
+    // if (targetURLs.includes(window.location.href)) {
+    // const alreadyOpened = localStorage.getItem('projectDetailsOpened');
+    // const confirmationShown = sessionStorage.getItem('projectDetailsConfirmationShown');
 
-        if (!alreadyOpened && !confirmationShown) {
-            showCustomConfirm('Please click "Yes" to update the project details for today without fail.', (userConfirmed) => {
-                if (userConfirmed) {
-                    showProjectDetailsForm();
-                    localStorage.setItem('projectDetailsOpened', 'true');
-                }
-                sessionStorage.setItem('projectDetailsConfirmationShown', 'true');
-            });
-        }
-    }
+    // if (!alreadyOpened && !confirmationShown) {
+    // showCustomConfirm('Please click "Yes" to update the project details for today without fail.', (userConfirmed) => {
+    // if (userConfirmed) {
+    // showProjectDetailsForm();
+    // localStorage.setItem('projectDetailsOpened', 'true');
+    // }
+    // sessionStorage.setItem('projectDetailsConfirmationShown', 'true');
+    // });
+    // }
+    //  }
 
     function clearLocalStorageIfNeeded() {
         const now = new Date();
@@ -606,6 +606,11 @@
             return;
         }
 
+        // Set logout time if it's an offline entry
+        if (entry.auxLabel.toLowerCase().includes('offline')) {
+            setLogoutTime(entry.auxLabel);
+        }
+
         const timeSpentInSeconds = entry.timeSpent / 1000;
 
         function saveUniqueValue(key, value) {
@@ -669,6 +674,9 @@
                     relatedAudits: entry.relatedAudits,
                     areYouPL: entry.areYouPL || localStorage.getItem('areYouPL-' + entry.auxLabel),
                     comment: entry.comment || localStorage.getItem('comment-' + entry.auxLabel),
+                    loginTime: localStorage.getItem('dailyLoginTime'),
+                    logoutTime: localStorage.getItem('dailyLogoutTime'),
+                    exportedTimestamp: new Date().toISOString()
                 });
 
                 localStorage.setItem('auxData', JSON.stringify(auxData));
@@ -705,6 +713,9 @@
                     relatedAudits: entry.relatedAudits,
                     areYouPL: entry.areYouPL || localStorage.getItem('areYouPL-' + entry.auxLabel),
                     comment: entry.comment || localStorage.getItem('comment-' + entry.auxLabel),
+                    loginTime: localStorage.getItem('dailyLoginTime'),
+                    logoutTime: localStorage.getItem('dailyLogoutTime'),
+                    exportedTimestamp: new Date().toISOString()
                 });
 
                 localStorage.setItem('auxData', JSON.stringify(auxData));
@@ -1045,18 +1056,32 @@
 
             const inputs = table.getElementsByTagName('input');
             if (isEditing) {
-                originalInputValues = {}; // Reset before capturing
+                originalInputValues = {};
+
                 for (let i = 0; i < inputs.length; i++) {
                     const input = inputs[i];
                     const row = input.closest('tr');
                     const rowIndex = Array.from(row.parentNode.children).indexOf(row) - 1;
-                    const fieldKey = input.id.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
 
-                    // Log the values being stored
-                    console.log(`Storing original value for row ${rowIndex}, field ${fieldKey}:`, input.value);
+                    // Map the column index to the correct field name
+                    const columnIndex = Array.from(row.cells).indexOf(input.closest('td'));
+                    let fieldKey;
+                    switch(columnIndex) {
+                        case 2: fieldKey = 'auxLabel'; break;
+                        case 3: fieldKey = 'timeSpent'; break;
+                        case 4: fieldKey = 'projectTitle'; break;
+                        case 5: fieldKey = 'relatedAudits'; break;
+                        case 6: fieldKey = 'areYouPL'; break;
+                        case 7: fieldKey = 'comment'; break;
+                        default: continue;
+                    }
 
-                    originalInputValues[rowIndex] = originalInputValues[rowIndex] || {};
+                    if (!originalInputValues[rowIndex]) {
+                        originalInputValues[rowIndex] = {};
+                    }
+
                     originalInputValues[rowIndex][fieldKey] = input.value;
+                    console.log(`Stored original value for row ${rowIndex}, field ${fieldKey}:`, input.value);
                 }
             }
 
@@ -1169,34 +1194,57 @@
             if (confirmed) {
                 try {
                     const rows = Array.from(table.rows).slice(1); // Skip header row
+                    let hasAnyChanges = false;
 
                     rows.forEach((row, index) => {
                         const cells = row.cells;
                         const updatedEntry = { ...auxData[index] };
-                        let hasChanges = false;
+                        let rowChanged = false;
 
-                        // Compare all editable fields with their original values
-                        ['auxLabel', 'timeSpent', 'projectTitle', 'relatedAudits', 'areYouPL', 'comment'].forEach(field => {
-                            const originalValue = originalInputValues[index]?.[field];
-                            const currentInput = cells[getColumnIndex(field)].querySelector('input');
+                        // Check each editable field for changes
+                        const fields = {
+                            auxLabel: 2,
+                            timeSpent: 3,
+                            projectTitle: 4,
+                            relatedAudits: 5,
+                            areYouPL: 6,
+                            comment: 7
+                        };
+
+                        Object.entries(fields).forEach(([field, cellIndex]) => {
+                            const originalValue = originalInputValues[index]?.[field] || '';
+                            const currentInput = cells[cellIndex].querySelector('input');
                             const currentValue = currentInput ? currentInput.value : '';
 
+                            console.log(`Row ${index} - Field ${field}:`, {
+                                original: originalValue,
+                                current: currentValue,
+                                changed: originalValue !== currentValue
+                            });
+
                             if (originalValue !== currentValue) {
-                                hasChanges = true;
+                                rowChanged = true;
+                                hasAnyChanges = true;
                             }
                         });
 
-                        // Update isEdited status based on whether changes were made
-                        updatedEntry.isEdited = hasChanges ? "Yes" : "No";
-                        updatedEntry.editReason = window.editReason || "";
+                        // Only update edit status if this specific row changed
+                        if (rowChanged) {
+                            console.log(`Row ${index} was modified`);
+                            updatedEntry.isEdited = "Yes";
+                            updatedEntry.editReason = window.editReason || "";
+                        } else {
+                            console.log(`Row ${index} was not modified`);
+                            updatedEntry.isEdited = auxData[index].isEdited || "N/A";
+                            updatedEntry.editReason = auxData[index].editReason || "";
+                        }
 
-                        // Update other fields
+                        // Update the basic fields
                         const timeInput = cells[3].querySelector('input').value;
                         if (!/^\d{2}:\d{2}:\d{2}$/.test(timeInput)) {
                             throw new Error(`Invalid time format in row ${index + 1}. Please use HH:MM:SS`);
                         }
 
-                        updatedEntry.lastModified = new Date().toISOString();
                         updatedEntry.auxLabel = cells[2].querySelector('input').value;
                         updatedEntry.timeSpent = parseTimeToMilliseconds(timeInput);
                         updatedEntry.projectTitle = cells[4].querySelector('input').value;
@@ -1204,14 +1252,23 @@
                         updatedEntry.areYouPL = cells[6].querySelector('input').value;
                         updatedEntry.comment = cells[7].querySelector('input').value;
 
+                        if (rowChanged) {
+                            updatedEntry.lastModified = new Date().toISOString();
+                        }
+
                         auxData[index] = updatedEntry;
                     });
 
-                    // Save updated data
-                    localStorage.setItem('auxData', JSON.stringify(auxData));
-                    localStorage.setItem('dataModified', 'true');
-                    showCustomAlert('All changes saved successfully!');
+                    if (hasAnyChanges) {
+                        localStorage.setItem('auxData', JSON.stringify(auxData));
+                        localStorage.setItem('dataModified', 'true');
+                        showCustomAlert('Changes saved successfully!');
+                    } else {
+                        showCustomAlert('No changes detected');
+                    }
+
                     displayAUXData(true);
+
                 } catch (error) {
                     showCustomAlert(error.message);
                 }
@@ -1240,6 +1297,173 @@
 
     ///////////////////////////////////////////////////////////////
     //Front End CSV option//
+    // Add the edit reason popup function
+    function showEditReasonPopup(callback) {
+        const styles = document.createElement('style');
+        styles.textContent = `
+        .edit-reason-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.6);
+            z-index: 10002;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(8px);
+            animation: overlayFadeIn 0.3s ease-out;
+        }
+
+        .edit-reason-box {
+            background: linear-gradient(145deg, #2a2a2a, #323232);
+            border-radius: 16px;
+            padding: 25px 35px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3),
+                        0 1px 8px rgba(0, 0, 0, 0.2),
+                        0 0 1px rgba(255, 255, 255, 0.1) inset;
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+            animation: modalSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .edit-reason-message {
+            margin-bottom: 25px;
+            font-size: 1.1rem;
+            line-height: 1.5;
+            color: #ffffff;
+            font-weight: 500;
+        }
+
+        .edit-reason-textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ced4da;
+            border-radius: 8px;
+            resize: vertical;
+            min-height: 100px;
+            font-size: 1rem;
+            margin-bottom: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #ffffff;
+        }
+
+        .edit-reason-button {
+            padding: 10px 28px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.95rem;
+            font-weight: 600;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            margin: 0 8px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .edit-reason-button::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0));
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .edit-reason-button:hover::after {
+            opacity: 1;
+        }
+
+        .edit-reason-submit {
+            background: linear-gradient(135deg, #4CAF50, #43A047);
+            color: white;
+            box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
+        }
+
+        .edit-reason-submit:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(76, 175, 80, 0.4);
+        }
+
+        .edit-reason-cancel {
+            background: linear-gradient(135deg, #FF5252, #D32F2F);
+            color: white;
+            box-shadow: 0 4px 15px rgba(255, 82, 82, 0.3);
+        }
+
+        .edit-reason-cancel:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 82, 82, 0.4);
+        }
+
+        @keyframes overlayFadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: scale(0.95) translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1) translateY(0);
+            }
+        }
+    `;
+        document.head.appendChild(styles);
+
+        const overlay = document.createElement('div');
+        overlay.className = 'edit-reason-overlay';
+
+        const box = document.createElement('div');
+        box.className = 'edit-reason-box';
+
+        const message = document.createElement('p');
+        message.className = 'edit-reason-message';
+        message.textContent = 'Please provide a reason for uploading this CSV file:';
+        box.appendChild(message);
+
+        const textarea = document.createElement('textarea');
+        textarea.className = 'edit-reason-textarea';
+        textarea.placeholder = 'Enter your reason here...';
+        box.appendChild(textarea);
+
+        const submitBtn = document.createElement('button');
+        submitBtn.className = 'edit-reason-button edit-reason-submit';
+        submitBtn.textContent = 'Submit';
+        box.appendChild(submitBtn);
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'edit-reason-button edit-reason-cancel';
+        cancelBtn.textContent = 'Cancel';
+        box.appendChild(cancelBtn);
+
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+
+        submitBtn.addEventListener('click', () => {
+            const reason = textarea.value.trim();
+            if (!reason) {
+                showCustomAlert('Please enter a reason.');
+                return;
+            }
+            document.body.removeChild(overlay);
+            callback(reason);
+        });
+
+        cancelBtn.addEventListener('click', () => {
+            document.body.removeChild(overlay);
+            callback(null);
+        });
+    }
+
     function restoreFromCSV(event) {
         const file = event.target.files[0];
         if (!file) {
@@ -1253,55 +1477,67 @@
         existingAuxData = existingAuxData.filter(entry => entry.auxLabel !== 'Late Login');
         localStorage.setItem('auxData', JSON.stringify(existingAuxData));
 
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            const contents = e.target.result;
-            const lines = contents.split('\n').slice(1);
-            const restoredAuxData = lines.map(line => {
-                const [
-                    date,
-                    username,
-                    auxLabel,
-                    timeSpent,
-                    projectTitle,
-                    relatedAudits,
-                    areYouPL,
-                    comment
-                ] = line.split(',');
+        showEditReasonPopup((reason) => {
+            if (!reason) {
+                showCustomAlert('Edit reason is required to restore CSV');
+                return;
+            }
 
-                if (!timeSpent || timeSpent === "undefined") {
-                    console.error('Invalid timeSpent value:', timeSpent);
-                    return null;
-                }
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const contents = e.target.result;
+                const lines = contents.split('\n').slice(1);
+                const restoredAuxData = lines.map(line => {
+                    const [
+                        date,
+                        username,
+                        auxLabel,
+                        timeSpent,
+                        projectTitle,
+                        relatedAudits,
+                        areYouPL,
+                        comment
+                    ] = line.split(',');
 
-                return {
-                    date,
-                    username,
-                    auxLabel,
-                    timeSpent: parseTime(timeSpent),
-                    projectTitle,
-                    relatedAudits,
-                    areYouPL,
-                    comment,
-                    isRestored: true
-                };
-            }).filter(entry => entry && entry.date);
+                    if (!timeSpent || timeSpent === "undefined") {
+                        console.error('Invalid timeSpent value:', timeSpent);
+                        return null;
+                    }
 
-            const combinedAuxData = [...existingAuxData, ...restoredAuxData];
+                    return {
+                        date,
+                        username,
+                        auxLabel,
+                        timeSpent: parseTime(timeSpent),
+                        projectTitle,
+                        relatedAudits,
+                        areYouPL,
+                        comment,
+                        isEdited: "Yes", // Add isEdited flag
+                        editReason: reason // Add edit reason
+                    };
+                }).filter(entry => entry && entry.date);
 
-            localStorage.setItem('auxData', JSON.stringify(combinedAuxData));
-            localStorage.setItem('lastRestoreTimestamp', Date.now());
+                const existingAuxDataString = localStorage.getItem('auxData');
+                let existingAuxData = existingAuxDataString ? JSON.parse(existingAuxDataString) : [];
 
-            console.log('AUX Data merged and restored to localStorage:', combinedAuxData);
-            showCustomAlert('AUX Data restored and merged');
-            localStorage.removeItem('manualAUXChange');
-        };
+                existingAuxData = existingAuxData.filter(entry => entry.auxLabel !== 'Late Login');
+                const combinedAuxData = [...existingAuxData, ...restoredAuxData];
 
-        reader.onerror = function() {
-            console.error('Error reading file:', reader.error);
-        };
+                localStorage.setItem('auxData', JSON.stringify(combinedAuxData));
+                localStorage.setItem('lastRestoreTimestamp', Date.now());
 
-        reader.readAsText(file);
+                console.log('AUX Data merged and restored to localStorage:', combinedAuxData);
+                showCustomAlert('AUX Data restored and merged');
+                localStorage.removeItem('manualAUXChange');
+            };
+
+            reader.onerror = function() {
+                console.error('Error reading file:', reader.error);
+            };
+
+            reader.readAsText(file);
+        });
     }
 
     function exportToCSV() {
@@ -1514,7 +1750,7 @@
             animation: none;
         }
     }
-    `;
+                    `;
         document.head.appendChild(authStyles);
     }
 
@@ -1693,10 +1929,17 @@
 
                     auxData = auxData.filter(entry => entry.auxLabel !== 'undefined - N/A - N/A' && entry.date !== undefined);
 
-                    const csvContent = 'Date,Username,AUX Label,Time Spent,Project Title,Related Audits,Are You PL,Comment,Is Edited,Edit Reason\n' +
+                    const csvContent = 'Date,Username,AUX Label,Time Spent,Project Title,Related Audits,' +
+                          'Are You PL,Comment,Is Edited,Edit Reason,Login Time,Logout Time,Exported Timestamp\n' +
                           auxData.map(entry => {
                               const username = entry.username || "Unknown User";
-                              return `${entry.date},${username},${entry.auxLabel},${formatTime(entry.timeSpent)},${entry.projectTitle},${entry.relatedAudits},${entry.areYouPL || ''},${entry.comment || ''},${entry.isEdited},${entry.editReason}`;
+                              const logoutTime = entry.auxLabel.toLowerCase().includes('offline') ?
+                                    localStorage.getItem('dailyLogoutTime') : '';
+
+                              return `${entry.date},${username},${entry.auxLabel},${formatTime(entry.timeSpent)},` +
+                                  `${entry.projectTitle},${entry.relatedAudits},${entry.areYouPL || ''},` +
+                                  `${entry.comment || ''},${entry.isEdited},${entry.editReason},` +
+                                  `${entry.loginTime || ''},${logoutTime},${entry.exportedTimestamp}`;
                           }).join("\n");
 
                     console.log('CSV Content:', csvContent);
@@ -3577,6 +3820,36 @@
     document.head.appendChild(styles);
     ///////////////////////////////////////////////////////////////
     //CL Data Manager
+    async function checkCLManagerAuthorization(username) {
+        try {
+            const script = document.createElement('script');
+            // Update this URL to match your actual GitHub file location
+            script.src = 'https://mofi-l.github.io/aux-auth-config/auth-CLmanager.js';
+
+            await new Promise((resolve, reject) => {
+                script.onload = resolve;
+                script.onerror = reject;
+                document.head.appendChild(script);
+            });
+
+            // Add debug logging
+            console.log('Auth Config:', window.CL_AUTH_CONFIG);
+            console.log('Checking username:', username);
+            console.log('Authorized users:', window.CL_AUTH_CONFIG.authorizedUsers);
+
+            const isAuthorized = window.CL_AUTH_CONFIG.authorizedUsers.includes(username);
+            console.log('Is authorized:', isAuthorized);
+
+            document.head.removeChild(script);
+            delete window.CL_AUTH_CONFIG;
+
+            return isAuthorized;
+        } catch (error) {
+            console.error('CL Manager authorization check failed:', error);
+            return false;
+        }
+    }
+
     function showCLDataManagerOptions() {
         const modal = document.createElement('div');
         modal.className = 'cl-data-manager-modal';
@@ -5978,13 +6251,33 @@
         const container = document.getElementById('action-buttons');
         container.style.display = container.style.display === 'none' ? 'block' : 'none';
     });
-    document.getElementById('clDataManagerButton').addEventListener('click', showCLDataManagerOptions);
+
+    document.getElementById('clDataManagerButton').addEventListener('click', async () => {
+        const username = localStorage.getItem("currentUsername");
+        console.log('Current username:', username); // Debug log
+
+        try {
+            const isAuthorized = await checkCLManagerAuthorization(username);
+            console.log('Authorization result:', isAuthorized); // Debug log
+
+            if (!isAuthorized) {
+                showCustomAlert("You don't have permission to access the CL Data Manager");
+                return;
+            }
+
+            showCLDataManagerOptions();
+
+        } catch (error) {
+            console.error('Error checking CL Manager authorization:', error);
+            showCustomAlert('Failed to verify access permissions: ' + error.message);
+        }
+    });
 
     document.getElementById('exportToCSVButton').addEventListener('click', exportToCSV);
     document.getElementById('getFullDataButton').addEventListener('click', getFullData);
     document.getElementById('searchProjectTimeButton').addEventListener('click', searchProjectTime);
     document.getElementById('restoreCSVButton').addEventListener('click', function() {
-        showCustomAlert('This option is no longer available')
+        document.getElementById('csvFileInput').click();
     });
     document.getElementById('exportToAWSButton').addEventListener('click', exportToAWS);
     document.getElementById('displayAuxDataButton').addEventListener('click', function() {
@@ -6001,7 +6294,7 @@
     });
     document.getElementById('importFromAws').addEventListener('click', importFromAws);
     document.getElementById('auraGuidelines').addEventListener('click', function() {
-        window.open('https://document-versions-production.s3.us-west-2.amazonaws.com/040ebafd-415c-469b-98cc-e88aa8f75d36?response-content-disposition=inline%3B%20filename%3D%22Microsite%20NPT%20Guidelines.pdf%22&response-content-type=application%2Fpdf&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIA2DQ7HDUAXRWHHKBZ%2F20250903%2Fus-west-2%2Fs3%2Faws4_request&X-Amz-Date=20250903T041308Z&X-Amz-Expires=30&X-Amz-Security-Token=IQoJb3JpZ2luX2VjENP%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLXdlc3QtMiJIMEYCIQCvujzbDcPn0hugb%2F2bFi3OiLZeJBDdogP8pbvHPG1pOwIhAKdH2DDsLzYiD68%2BylYN7gTBVofkuPsQaVTNLyyXgaW2Ks4DCDwQBBoMNjk0Nzc2NDM4MDE3IgyY%2BYZsWLpkv2j94m4qqwPOI7tOQIdxQCdiAYi1kcnsBuoon7PFmZ187i34HbYvqxBbg2kR6U4fri72bnFBBahROeioIDvBEtTewp9KKU6G7RQtKSCY32D9o7p8Ly8DPvYwA707tvOnx1nDlFhhlSLmm0xuBKwxJfo1khGhiMsmG4%2FxgQ%2FP3oq2t6%2Bf4CIpmtccyhI5ToXsPdprK%2FWLPHEgxhTJ%2FiAa25TDSYV%2BPbAAGc3IEY49%2FDaQiYAV6aLxdTsaYuNY6GnEP7Y3NJp8nAuS1PJym7Rg09rqPLQc5bcJu8dow%2B1Od8tLOWnHADsaE2K2Kn67CGP8WMgroPNWXKCcIc6tqP2wyEx9LmdZAou8e4qGFO4ZBCOMT1nP2B9sYJqmDdAapUh13ZuSrZPMFScs832GDETCydCoFpX2NP1nO2l%2Fvu3XujvX3Gq5gkmKqd6cOmAp6v%2FWtNtZSDFgPxlG5Z%2FVboFML9kamVHd9eQ5NdKbnV4qHAjV89xp3hJ0vYsB1vNrG31%2BVnPGh8zxsiBbIUXhkA5L%2BptOyVsl%2BBFmEswfTBPMZRn0KTIJxsC9MqhF5vhodulXHazrMMLk3sUGOqAB3%2BI8fzDKqaG4S8n2qwAuJ7B4u1F9n6LM2C7EZZHIYcQgPiWzbWeP18myz%2FiOegFEtKMWhozVB9c545C4%2BW97xVzGc%2BHXQeHULrGOJY1nfhL6jmf2MlcFj0UzyWG3E7BxndApcRLAzqTXXetMXe54Dmkfu2XFuPKj2mHIuCVcakbAG8UOf%2FJM4Hlw%2BDAplAO8uyXqMHO3Ecu497wj0s0CgA%3D%3D&X-Amz-SignedHeaders=host&X-Amz-Signature=c981a04ec60cb72e5958f6f717232fb4f10e3599b6a18aeff6859752347732b1', '_blank');
+        window.open('https://drive.corp.amazon.com/documents/mofila@/Microsite/Aura/Microsite%20NPT%20Guidelines.pdf', '_blank');
     });
     document.getElementById('reportBugImage').addEventListener('click', function() {
         window.open('https://amazon.enterprise.slack.com/archives/C0941UXQ7DJ');
@@ -6101,7 +6394,8 @@
             }
         }
 
-        const l1Text = document.querySelector('#ccp-current-state-text').textContent.trim();
+        const stateTextElement = document.querySelector('#ccp-current-state-text');
+        const l1Text = stateTextElement ? stateTextElement.textContent.trim() : '';
         const l2Container = document.getElementById('aux-l2-container');
         const l3Container = document.getElementById('aux-l3-container');
 
@@ -6588,8 +6882,8 @@
                         ${isMicrositeWork ? 'required' : ''}
                     >
                     ${!isMicrositeWork ?
-        '<small style="color: #666; display: block; margin-top: 5px;">Project title is only required for Microsite Project Work</small>'
-    : ''}
+            '<small style="color: #666; display: block; margin-top: 5px;">Project title is only required for Microsite Project Work</small>'
+        : ''}
                 </div>
 
                 <div class="input-field">
@@ -6607,8 +6901,8 @@
                         oninput="this.value = this.value.replace(/[^0-9]/g, '')"
                     >
                     ${!enableAuditCount ?
-        '<small style="color: #666; display: block; margin-top: 5px;">Audit count is only required after "Conduct Project"</small>'
-    : ''}
+            '<small style="color: #666; display: block; margin-top: 5px;">Audit count is only required after "Conduct Project"</small>'
+        : ''}
                 </div>
 
             <div class="input-field">
@@ -6667,9 +6961,18 @@
 
         // Helper function to validate project title format
         function isValidProjectTitle(title) {
+            // Check if it's just numbers
             if (/^\d+$/.test(title)) return true;
+
+            // Check for WF- prefix followed by numbers
             if (/^WF-\d+$/.test(title)) return true;
+
+            // Check for Microsite- prefix followed by numbers
             if (/^Microsite-\d+$/.test(title)) return true;
+
+            // Check for CL- prefix followed by any characters
+            if (/^CL-.*$/.test(title)) return true;
+
             return false;
         }
 
@@ -7154,7 +7457,9 @@
     document.head.appendChild(document.createElement('style')).textContent = projectDetailsStyles;
 
     //Project details Dashboard
-    document.getElementById('projectDetailsButton').addEventListener('click', showProjectDetailsForm);
+    document.getElementById('projectDetailsButton').addEventListener('click', function() {
+        showCustomAlert('This option is no longer available')
+    });
 
     //Get project details
     async function showProjectDashboard() {
@@ -8460,7 +8765,9 @@
         window.URL.revokeObjectURL(url);
     }
 
-    document.getElementById('getProjectDetailsButton').addEventListener('click', showProjectDashboard);
+    document.getElementById('getProjectDetailsButton').addEventListener('click', function() {
+        showCustomAlert('This option is no longer available')
+    });
     ///////////////////////////////////////////////////////
     //Real-time efficiency tracker
     let dashboardUpdateInterval;
@@ -8531,7 +8838,6 @@
         const storedDate = localStorage.getItem('lastLogoutDate');
 
         if (storedDate !== today) {
-            // New day - clear previous logout time
             localStorage.removeItem('dailyLogoutTime');
         }
 
@@ -10364,9 +10670,11 @@
     addFileInput();
     restoreTimer();
     checkLoginStatus();
+    checkForUpdates();
     ///////////////////////////////////////////////////////////////
     //DOM content loaded
     document.addEventListener('DOMContentLoaded', () => {
+        checkForUpdates();
         resetDailySteppingAwayTime();
         setInitialLoginTime();
         injectAuthStyles();
@@ -10391,6 +10699,27 @@
             }
         }
     });
+
+    // Add version checking function
+    async function checkForUpdates() {
+        try {
+            const response = await fetch('https://raw.githubusercontent.com/Mofi-l/aura-tool/main/aura.meta.js');
+            const metaContent = await response.text();
+
+            // Extract version from meta file
+            const versionMatch = metaContent.match(/@version\s+(\d+\.\d+)/);
+            if (versionMatch) {
+                const latestVersion = versionMatch[1];
+                const currentVersion = GM_info.script.version;
+
+                if (latestVersion > currentVersion) {
+                    showCustomAlert('A new version is available. Tampermonkey will automatically update the script.');
+                }
+            }
+        } catch (error) {
+            console.error('Error checking for updates:', error);
+        }
+    }
 
     //Quotes and Version
     const versionText = document.createElement('div');
