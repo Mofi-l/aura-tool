@@ -8,14 +8,14 @@
 // @require      https://cdnjs.cloudflare.com/ajax/libs/amazon-cognito-identity-js/5.2.1/amazon-cognito-identity.min.js
 // @updateURL    https://raw.githubusercontent.com/Mofi-l/aura-tool/main/aura.meta.js
 // @downloadURL  https://raw.githubusercontent.com/Mofi-l/aura-tool/main/aura.user.js
-// @version      3.01
+// @version      3.02
 // @grant        none
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    const currentVersion = "3.01";
+    const currentVersion = "3.02";
     let animationFrameId = null;
     let timerUpdateDebounce = null;
     ///////////////////////////////////////////////////////////////
@@ -51,9 +51,10 @@
 
                 const cognitoUser = new AmazonCognitoIdentity.CognitoUser(userData);
 
+
                 return new Promise((resolve, reject) => {
                     cognitoUser.authenticateUser(authenticationDetails, {
-                        onSuccess: (result) => {
+                        onSuccess: async (result) => {
                             const token = result.getIdToken().getJwtToken();
 
                             // Update authentication state
@@ -64,6 +65,58 @@
                             // Store credentials securely
                             localStorage.setItem('lastAuthUsername', username);
                             localStorage.setItem('lastAuthPassword', password);
+
+                            // Configure AWS with the token
+                            try {
+                                await configureAWS(token);
+
+                                const s3 = new AWS.S3();
+                                const today = new Date().toISOString().split('T')[0];
+
+                                try {
+                                    // Try to get existing login time from AWS
+                                    const response = await s3.getObject({
+                                        Bucket: 'real-time-databucket',
+                                        Key: `login-times/${username}_${today}.json`
+                                }).promise();
+
+                                    const data = JSON.parse(response.Body.toString());
+                                    if (data.loginTime) {
+                                        // If found in AWS, store in localStorage
+                                        localStorage.setItem('dailyLoginTime', data.loginTime);
+                                    }
+                                } catch (error) {
+                                    if (error.code === 'NoSuchKey') {
+                                        // Only set new login time if not found in AWS
+                                        const newLoginTime = new Date().toLocaleTimeString('en-US', {
+                                            hour: 'numeric',
+                                            minute: '2-digit',
+                                            second: '2-digit',
+                                            hour12: true
+                                        });
+
+                                        // Store new login time in localStorage
+                                        localStorage.setItem('dailyLoginTime', newLoginTime);
+
+                                        // Store new login time in AWS
+                                        await s3.putObject({
+                                            Bucket: 'real-time-databucket',
+                                            Key: `login-times/${username}_${today}.json`,
+                                            Body: JSON.stringify({
+                                                username: username,
+                                                date: today,
+                                                loginTime: newLoginTime
+                                            }),
+                                            ContentType: 'application/json'
+                                        }).promise();
+                                    } else {
+                                        // Log other AWS errors
+                                        console.error('AWS Error:', error);
+                                    }
+                                }
+                            } catch (error) {
+                                console.error('Error checking/setting login time:', error);
+                            }
 
                             resolve(token);
                         },
@@ -184,6 +237,7 @@
     //Check for Updates, alerts and Clear Local storage
     let isTabFocused = true;
     let alertShown = false;
+
     window.addEventListener('focus', () => {
         isTabFocused = true;
     });
@@ -590,6 +644,7 @@
     // Function to save AUX data to localStorage
     function saveAUXData(entry) {
         const auxData = JSON.parse(localStorage.getItem('auxData')) || [];
+
         auxData.forEach(entry => {
             if (!entry.hasOwnProperty('isEdited')) {
                 entry.isEdited = "N/A";
@@ -607,6 +662,8 @@
         }
 
         const timeSpentInSeconds = entry.timeSpent / 1000;
+        const timeInMinutes = timeSpentInSeconds / 60;
+        const timeInHours = timeInMinutes / 60;
 
         function saveUniqueValue(key, value) {
             let storedValues = JSON.parse(localStorage.getItem(key)) || [];
@@ -617,98 +674,189 @@
         }
 
         function updateEntry(entryToUpdate, key, newValue) {
-            if (newValue) {
-                entryToUpdate[key] = entryToUpdate[key] || [];
+            if (!newValue) return;
+
+            // Special handling for relatedAudits
+            if (key === 'relatedAudits') {
+                // If the field doesn't exist yet, initialize it
+                if (!entryToUpdate[key]) {
+                    entryToUpdate[key] = '';
+                }
+                // Store as string value directly
+                entryToUpdate[key] = newValue.toString();
+                return;
+            }
+
+            // For other fields that might need array handling
+            if (!entryToUpdate[key]) {
+                entryToUpdate[key] = [];
+            }
+
+            if (Array.isArray(entryToUpdate[key])) {
                 if (!entryToUpdate[key].includes(newValue)) {
                     entryToUpdate[key].push(newValue);
                 }
+            } else {
+                // If not an array, just set the value
+                entryToUpdate[key] = newValue;
             }
         }
 
-        const relevantEntries = auxData.map((item, index) => ({ item, index }))
-        .filter(({ item }) => item.auxLabel.includes("Conduct Project"));
 
-        const previousEntry = relevantEntries.length > 1
-        ? relevantEntries[relevantEntries.length - 2].item
-        : null;
-        const previousEntryIndex = relevantEntries.length > 1
-        ? relevantEntries[relevantEntries.length - 2].index
-        : -1;
+        function splitAuxLabel(auxLabel) {
+            if (!auxLabel || typeof auxLabel !== 'string') {
+                return ['N/A', 'N/A', 'N/A'];
+            }
 
-        // Update previous entry with new relatedAudits value if available
-        if (entry.relatedAudits && previousEntry) {
-            updateEntry(previousEntry, 'relatedAudits', entry.relatedAudits);
-            auxData[previousEntryIndex] = previousEntry;
+            const parts = auxLabel.split(' - ').map(part => {
+                const trimmed = part.trim();
+                if (!trimmed || trimmed === 'undefined' || /^\d{1,2}:\d{2}:\d{2}$/.test(trimmed)) {
+                    return 'N/A';
+                }
+                return trimmed;
+            });
+
+            while (parts.length < 3) {
+                parts.push('N/A');
+            }
+
+            if (/^\d{1,2}:\d{2}:\d{2}$/.test(parts[0])) {
+                parts[0] = entry.auxLabel ? entry.auxLabel.split(' - ')[0] : 'N/A';
+            }
+
+            return parts;
         }
 
-        if (entry.auxLabel === "Offline - N/A - N/A") {
-            const existingOfflineIndex = auxData.findIndex(item => item.auxLabel === "Offline - N/A - N/A");
-            if (existingOfflineIndex === -1) { // Only proceed if no offline entry exists
-                const uniqueId = username + "-" + entry.date + "-" + entry.auxLabel + "-" + Math.random().toString(36).substr(2, 9);
-                saveUniqueValue('relatedAudits', entry.relatedAudits);
+        // Find relevant entries with Conduct Project
+        const relevantEntries = auxData
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) =>
+                item &&
+                item.auxLabel3 &&
+                item.auxLabel3.trim() === 'Conduct Project'
+               );
 
-                const lastEntry = relevantEntries.length > 0
-                ? relevantEntries[relevantEntries.length - 1].item
-                : null;
-                const lastIndex = relevantEntries.length > 0
-                ? relevantEntries[relevantEntries.length - 1].index
-                : -1;
+        console.log('Found Conduct Project entries:', relevantEntries.length);
 
+        // Get the last Conduct Project entry
+        const lastEntry = relevantEntries.length > 0
+        ? relevantEntries[relevantEntries.length - 1].item
+        : null;
+        const lastIndex = relevantEntries.length > 0
+        ? relevantEntries[relevantEntries.length - 1].index
+        : -1;
+
+        console.log('Last Conduct Project entry:', lastEntry);
+
+        // Get related audits from either entry or localStorage
+        const relatedAudits = entry.relatedAudits ||
+              localStorage.getItem('relatedAudits-' + entry.auxLabel);
+
+        // Update last Conduct Project entry with related audits
+        if (lastEntry && relatedAudits) {
+            updateEntry(lastEntry, 'relatedAudits', relatedAudits);
+            auxData[lastIndex] = lastEntry;
+            console.log('Updated last Conduct Project entry with audit:', relatedAudits);
+        }
+
+        // Save unique value for related audits
+        saveUniqueValue('relatedAudits', relatedAudits);
+
+        // Process current AUX label
+        const currentAuxLabel = entry.auxLabel || "N/A - N/A - N/A";
+        const originalParts = currentAuxLabel.split(' - ').map(part => part.trim());
+        const [auxLabel1, auxLabel2, auxLabel3] = originalParts.length >= 3 ?
+              originalParts : splitAuxLabel(currentAuxLabel);
+
+        if (currentAuxLabel === "Offline - N/A - N/A") {
+            const existingOfflineIndex = auxData.findIndex(item =>
+                                                           item && item.auxLabel === "Offline - N/A - N/A"
+                                                          );
+
+            if (existingOfflineIndex === -1) {
+                const uniqueId = username + "-" + entry.date + "-" + currentAuxLabel + "-" +
+                      Math.random().toString(36).substr(2, 9);
+
+                // Update last entry again before saving new entry
                 if (lastEntry) {
-                    updateEntry(lastEntry, 'relatedAudits', entry.relatedAudits || localStorage.getItem('relatedAudits-' + entry.auxLabel));
+                    updateEntry(lastEntry, 'relatedAudits', relatedAudits);
                     auxData[lastIndex] = lastEntry;
                 }
 
-                auxData.push({
+                const weekNo = getWeekNumber(new Date());
+                const site = loadMSSiteData()[username] || 'SESU';
+
+                const newEntry = {
                     uniqueId: uniqueId,
                     date: entry.date,
-                    username,
-                    auxLabel: entry.auxLabel,
+                    weekNo: weekNo,
+                    username: username,
+                    auxLabel: currentAuxLabel,
+                    auxLabel1: auxLabel1 || 'Offline',
+                    auxLabel2: auxLabel2 || 'N/A',
+                    auxLabel3: auxLabel3 || 'N/A',
                     timeSpent: entry.timeSpent,
-                    projectTitle: entry.projectTitle || localStorage.getItem('projectTitle-' + entry.auxLabel),
-                    relatedAudits: entry.relatedAudits,
-                    areYouPL: entry.areYouPL || localStorage.getItem('areYouPL-' + entry.auxLabel),
-                    comment: entry.comment || localStorage.getItem('comment-' + entry.auxLabel),
-                });
+                    timeMinutes: timeInMinutes.toFixed(2),
+                    timeHours: timeInHours.toFixed(2),
+                    projectTitle: entry.projectTitle || localStorage.getItem('projectTitle-' + currentAuxLabel) || 'N/A',
+                    relatedAudits: entry.relatedAudits || 'N/A',
+                    areYouPL: entry.areYouPL || localStorage.getItem('areYouPL-' + currentAuxLabel) || 'N/A',
+                    comment: entry.comment || localStorage.getItem('comment-' + currentAuxLabel) || 'N/A',
+                    site: site,
+                    isEdited: entry.isEdited || 'N/A',
+                    editReason: entry.editReason || 'N/A',
+                    loginTime: localStorage.getItem('dailyLoginTime') || 'N/A',
+                    logoutTime: localStorage.getItem('dailyLogoutTime') || 'N/A'
+                };
 
+                auxData.push(newEntry);
                 localStorage.setItem('auxData', JSON.stringify(auxData));
-                console.log('Offline entry saved:', auxData);
+                console.log('Offline entry saved:', newEntry);
                 displayAUXData(false);
             } else {
                 console.log('Offline entry already exists. Skipping duplicate.');
             }
         } else if (timeSpentInSeconds > 5) {
-            const uniqueId = username + "-" + entry.date + "-" + entry.auxLabel + "-" + Math.random().toString(36).substr(2, 9);
+            const uniqueId = username + "-" + entry.date + "-" + currentAuxLabel + "-" +
+                  Math.random().toString(36).substr(2, 9);
             const existingEntryIndex = auxData.findIndex(item => item.uniqueId === uniqueId);
-            saveUniqueValue('relatedAudits', entry.relatedAudits);
 
-            const lastEntry = relevantEntries.length > 0
-            ? relevantEntries[relevantEntries.length - 1].item
-            : null;
-            const lastIndex = relevantEntries.length > 0
-            ? relevantEntries[relevantEntries.length - 1].index
-            : -1;
-
+            // Update last entry again before saving new entry
             if (lastEntry) {
-                updateEntry(lastEntry, 'relatedAudits', entry.relatedAudits || localStorage.getItem('relatedAudits-' + entry.auxLabel));
+                updateEntry(lastEntry, 'relatedAudits', relatedAudits);
                 auxData[lastIndex] = lastEntry;
             }
 
             if (existingEntryIndex === -1) {
-                auxData.push({
+                const weekNo = getWeekNumber(new Date());
+                const site = loadMSSiteData()[username] || 'SESU';
+
+                const newEntry = {
                     uniqueId: uniqueId,
                     date: entry.date,
-                    username,
-                    auxLabel: entry.auxLabel,
+                    weekNo: weekNo,
+                    username: username,
+                    auxLabel: currentAuxLabel,
+                    auxLabel1: auxLabel1,
+                    auxLabel2: auxLabel2,
+                    auxLabel3: auxLabel3,
                     timeSpent: entry.timeSpent,
-                    projectTitle: entry.projectTitle || localStorage.getItem('projectTitle-' + entry.auxLabel),
-                    relatedAudits: entry.relatedAudits,
-                    areYouPL: entry.areYouPL || localStorage.getItem('areYouPL-' + entry.auxLabel),
-                    comment: entry.comment || localStorage.getItem('comment-' + entry.auxLabel),
-                });
+                    timeMinutes: timeInMinutes.toFixed(2),
+                    timeHours: timeInHours.toFixed(2),
+                    projectTitle: entry.projectTitle || localStorage.getItem('projectTitle-' + currentAuxLabel) || 'N/A',
+                    relatedAudits: entry.relatedAudits || 'N/A',
+                    areYouPL: entry.areYouPL || localStorage.getItem('areYouPL-' + currentAuxLabel) || 'N/A',
+                    comment: entry.comment || localStorage.getItem('comment-' + currentAuxLabel) || 'N/A',
+                    site: site,
+                    isEdited: entry.isEdited || 'N/A',
+                    editReason: entry.editReason || 'N/A',
+                    loginTime: localStorage.getItem('dailyLoginTime') || 'N/A',
+                    logoutTime: localStorage.getItem('dailyLogoutTime') || 'N/A'
+                };
 
+                auxData.push(newEntry);
                 localStorage.setItem('auxData', JSON.stringify(auxData));
-                console.log('AUX Data saved:', auxData);
+                console.log('AUX Data saved:', newEntry);
                 displayAUXData(false);
             } else {
                 console.log('Entry with the same unique identifier already exists.');
@@ -717,8 +865,6 @@
             console.log('Time spent is less than 5 seconds. Skipping entry.');
         }
     }
-
-
 
     // Function to display AUX data in a table
     let originalInputValues = null;
@@ -813,6 +959,16 @@
         saveButton.style.borderRadius = '4px';
         saveButton.style.cursor = 'pointer';
         saveButton.style.display = 'none';
+
+        const deleteButton = document.createElement('button');
+        deleteButton.textContent = 'Delete Entries';
+        deleteButton.style.padding = '8px 16px';
+        deleteButton.style.backgroundColor = '#dc3545';
+        deleteButton.style.color = 'white';
+        deleteButton.style.border = 'none';
+        deleteButton.style.borderRadius = '4px';
+        deleteButton.style.cursor = 'pointer';
+        deleteButton.style.marginLeft = '10px';
 
         let isEditing = false;
 
@@ -1166,6 +1322,8 @@
 
         controlPanel.appendChild(editButton);
         controlPanel.appendChild(saveButton);
+        controlPanel.appendChild(deleteButton);
+        deleteButton.onclick = () => handleDelete(table, auxData);
         popupContainer.appendChild(closeButton);
         popupContainer.appendChild(controlPanel);
         tableContainer.appendChild(table);
@@ -1175,6 +1333,219 @@
             popupContainer.style.display = 'block';
         } else {
             popupContainer.style.display = 'none';
+        }
+    }
+
+    function handleDelete(table, auxData) {
+        const rows = Array.from(table.rows).slice(1); // Skip header row
+
+        // Add checkboxes to each row
+        rows.forEach(row => {
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.style.marginRight = '10px';
+            const firstCell = row.cells[0];
+            firstCell.insertBefore(checkbox, firstCell.firstChild);
+        });
+
+        // Create delete confirmation buttons
+        const deleteControls = document.createElement('div');
+        deleteControls.style.marginTop = '10px';
+
+        const confirmDelete = document.createElement('button');
+        confirmDelete.textContent = 'Confirm Delete';
+        confirmDelete.style.backgroundColor = '#dc3545';
+        confirmDelete.style.color = 'white';
+        confirmDelete.style.border = 'none';
+        confirmDelete.style.borderRadius = '4px';
+        confirmDelete.style.padding = '8px 16px';
+        confirmDelete.style.marginRight = '10px';
+
+        const cancelDelete = document.createElement('button');
+        cancelDelete.textContent = 'Cancel';
+        cancelDelete.style.backgroundColor = '#6c757d';
+        cancelDelete.style.color = 'white';
+        cancelDelete.style.border = 'none';
+        cancelDelete.style.borderRadius = '4px';
+        cancelDelete.style.padding = '8px 16px';
+
+        deleteControls.appendChild(confirmDelete);
+        deleteControls.appendChild(cancelDelete);
+        table.parentNode.appendChild(deleteControls);
+
+        confirmDelete.onclick = () => {
+            const selectedIndexes = [];
+            rows.forEach((row, index) => {
+                const checkbox = row.cells[0].querySelector('input[type="checkbox"]');
+                if (checkbox.checked) {
+                    selectedIndexes.push(index);
+                }
+            });
+
+            if (selectedIndexes.length === 0) {
+                showCustomAlert('Please select entries to delete');
+                return;
+            }
+
+            showCustomConfirm('Warning: This action cannot be undone. Are you sure you want to delete the selected entries?', (confirmed) => {
+                if (confirmed) {
+                    // Remove entries in reverse order to maintain correct indexes
+                    for (let i = selectedIndexes.length - 1; i >= 0; i--) {
+                        auxData.splice(selectedIndexes[i], 1);
+                    }
+
+                    localStorage.setItem('auxData', JSON.stringify(auxData));
+                    localStorage.setItem('dataModified', 'true');
+                    showCustomAlert('Selected entries have been deleted');
+                    displayAUXData(true);
+                }
+            });
+        };
+
+        cancelDelete.onclick = () => {
+            displayAUXData(true);
+        };
+    }
+
+
+    function validateAuxLabelCombination(auxLabel) {
+        if (!auxLabel) {
+            throw new Error('AUX Label cannot be empty');
+        }
+
+        const parts = auxLabel.split(' - ');
+        if (parts.length !== 3) {
+            throw new Error('AUX Label must have three parts separated by " - "');
+        }
+
+        const [l1, l2, l3] = parts.map(part => part.trim());
+
+        // Level 1 validation
+        const validL1Names = Object.values(l1Names);
+        if (!validL1Names.includes(l1)) {
+            throw new Error(`Invalid Level 1 AUX: "${l1}". Must be one of: ${validL1Names.join(', ')}`);
+        }
+
+        // Get L1 key from value
+        const l1Key = Object.keys(l1Names).find(key => l1Names[key] === l1);
+
+        // Special case validations for L1 categories that should have N/A for L2 and L3
+        const naOnlyL1Keys = ['1', '2', '5', '6']; // Contact Handling, On Break, Stepping Away, Offline
+        if (naOnlyL1Keys.includes(l1Key)) {
+            if (l2 !== 'N/A' || l3 !== 'N/A') {
+                throw new Error(`${l1} should have N/A for both Level 2 and Level 3`);
+            }
+            return true;
+        }
+
+        // Level 2 validation
+        if (l1Key === '3' || l1Key === '4') { // Microsite Project Work or Non-Microsite Work
+            const validL2Options = l2Mapping[l1Key] || [];
+            if (!validL2Options.includes(l2) && l2 !== 'N/A') {
+                throw new Error(`Invalid Level 2 AUX for ${l1}: "${l2}"`);
+            }
+        } else if (l2 !== 'N/A') {
+            throw new Error(`Level 2 should be N/A for ${l1}`);
+        }
+
+        // Level 3 validation
+        if (l2 === 'N/A') {
+            if (l3 !== 'N/A') {
+                throw new Error('Level 3 must be N/A when Level 2 is N/A');
+            }
+            return true;
+        }
+
+        // Check L3 mapping
+        const validL3Options = l3Mapping[l2];
+        if (validL3Options) {
+            if (!validL3Options.includes(l3)) {
+                throw new Error(`Invalid Level 3 AUX for ${l2}: "${l3}". Must be one of: ${validL3Options.join(', ')}`);
+            }
+        } else {
+            // If no L3 mapping exists for this L2, then L3 should be N/A
+            if (l3 !== 'N/A') {
+                throw new Error(`Level 3 should be N/A for ${l2}`);
+            }
+        }
+
+        return true;
+    }
+
+
+    function validateTimeFormat(timeString) {
+        // Check for HH:MM:SS format
+        const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/;
+        return timeRegex.test(timeString);
+    }
+
+    function validateAreYouPL(value) {
+        const validValues = ['Yes', 'No', 'N/A'];
+        return validValues.includes(value);
+    }
+
+    function validateRelatedAudits(value) {
+        if (value === 'N/A') return true;
+        if (!value) return true;
+        return /^\d+$/.test(value);
+    }
+
+    function validateProjectTitle(title, auxLabel) {
+        // First check if this is Microsite Project Work
+        const isMicrositeWork = auxLabel && auxLabel.startsWith('Microsite Project Work');
+
+        // If it's not Microsite Project Work, title should be empty or N/A
+        if (!isMicrositeWork) {
+            if (!title || title.trim() === '' || title.trim() === 'N/A') {
+                return { isValid: true, message: '' };
+            } else {
+                return {
+                    isValid: false,
+                    message: 'Project title is only required for Microsite Project Work'
+                };
+            }
+        }
+
+        // For Microsite Project Work, title is required and must match patterns
+        // Note: N/A is not allowed for Microsite Project Work
+        if (!title || title.trim() === '' || title.trim() === 'N/A') {
+            return {
+                isValid: false,
+                message: 'Project title is required for Microsite Project Work'
+            };
+        }
+
+        // Remove any leading/trailing whitespace
+        title = title.trim();
+
+        // Check valid patterns for Microsite Project Work
+        try {
+            if (/^\d+$/.test(title)) {
+                return { isValid: true, message: '' };
+            }
+            if (/^WF-\d+$/.test(title)) {
+                return { isValid: true, message: '' };
+            }
+            if (/^Microsite-\d+$/.test(title)) {
+                return { isValid: true, message: '' };
+            }
+            if (/^CL-.*$/.test(title)) {
+                return { isValid: true, message: '' };
+            }
+            if (/^QA-.*$/.test(title)) {
+                return { isValid: true, message: '' };
+            }
+
+            return {
+                isValid: false,
+                message: 'Invalid project title format. Must be numbers only, WF-numbers, Microsite-numbers, CL-anything, or QA-anything'
+            };
+
+        } catch (error) {
+            return {
+                isValid: false,
+                message: 'Error validating project title'
+            };
         }
     }
 
@@ -1205,45 +1576,57 @@
                             const currentInput = cells[cellIndex].querySelector('input');
                             const currentValue = currentInput ? currentInput.value : '';
 
-                            console.log(`Row ${index} - Field ${field}:`, {
-                                original: originalValue,
-                                current: currentValue,
-                                changed: originalValue !== currentValue
-                            });
-
                             if (originalValue !== currentValue) {
                                 rowChanged = true;
                                 hasAnyChanges = true;
                             }
                         });
 
-                        // Only update edit status if this specific row changed
+                        // Handle edit status and reason
                         if (rowChanged) {
-                            console.log(`Row ${index} was modified`);
                             updatedEntry.isEdited = "Yes";
                             updatedEntry.editReason = window.editReason || "";
-                        } else {
-                            console.log(`Row ${index} was not modified`);
-                            updatedEntry.isEdited = auxData[index].isEdited || "N/A";
-                            updatedEntry.editReason = auxData[index].editReason || "";
+                            updatedEntry.lastModified = new Date().toISOString();
                         }
 
-                        // Update the basic fields
+                        // Validate time format
                         const timeInput = cells[3].querySelector('input').value;
-                        if (!/^\d{2}:\d{2}:\d{2}$/.test(timeInput)) {
+                        if (!validateTimeFormat(timeInput)) {
                             throw new Error(`Invalid time format in row ${index + 1}. Please use HH:MM:SS`);
                         }
 
-                        updatedEntry.auxLabel = cells[2].querySelector('input').value;
-                        updatedEntry.timeSpent = parseTimeToMilliseconds(timeInput);
-                        updatedEntry.projectTitle = cells[4].querySelector('input').value;
-                        updatedEntry.relatedAudits = cells[5].querySelector('input').value;
-                        updatedEntry.areYouPL = cells[6].querySelector('input').value;
-                        updatedEntry.comment = cells[7].querySelector('input').value;
-
-                        if (rowChanged) {
-                            updatedEntry.lastModified = new Date().toISOString();
+                        // Validate AUX label
+                        const auxLabel = cells[2].querySelector('input').value;
+                        if (!validateAuxLabelCombination(auxLabel)) {
+                            throw new Error(`Invalid AUX label combination in row ${index + 1}`);
                         }
+
+                        // Validate Project Title
+                        const projectTitle = cells[4].querySelector('input').value;
+                        const titleValidation = validateProjectTitle(projectTitle, auxLabel);
+                        if (!titleValidation.isValid) {
+                            throw new Error(`Row ${index + 1}: ${titleValidation.message}`);
+                        }
+
+                        // Validate Are You PL
+                        const areYouPL = cells[6].querySelector('input').value;
+                        if (!validateAreYouPL(areYouPL)) {
+                            throw new Error(`Invalid Are You PL value in row ${index + 1}. Must be Yes, No, or N/A`);
+                        }
+
+                        // Validate Related Audits
+                        const relatedAudits = cells[5].querySelector('input').value;
+                        if (!validateRelatedAudits(relatedAudits)) {
+                            throw new Error(`Invalid Related Audits value in row ${index + 1}. Must be a number or N/A`);
+                        }
+
+                        // Update the entry
+                        updatedEntry.auxLabel = auxLabel;
+                        updatedEntry.timeSpent = parseTimeToMilliseconds(timeInput);
+                        updatedEntry.projectTitle = projectTitle;
+                        updatedEntry.relatedAudits = relatedAudits;
+                        updatedEntry.areYouPL = areYouPL;
+                        updatedEntry.comment = cells[7].querySelector('input').value;
 
                         auxData[index] = updatedEntry;
                     });
@@ -1264,6 +1647,7 @@
             }
         });
     }
+
 
     // Helper function to get column index
     function getColumnIndex(fieldName) {
@@ -1460,12 +1844,6 @@
             return;
         }
 
-        const existingAuxDataString = localStorage.getItem('auxData');
-        let existingAuxData = existingAuxDataString ? JSON.parse(existingAuxDataString) : [];
-
-        existingAuxData = existingAuxData.filter(entry => entry.auxLabel !== 'Late Login');
-        localStorage.setItem('auxData', JSON.stringify(existingAuxData));
-
         showEditReasonPopup((reason) => {
             if (!reason) {
                 showCustomAlert('Edit reason is required to restore CSV');
@@ -1474,68 +1852,159 @@
 
             const reader = new FileReader();
             reader.onload = function(e) {
-                const contents = e.target.result;
-                const lines = contents.split('\n').slice(1);
-                const restoredAuxData = lines.map(line => {
-                    const [
-                        date,
-                        username,
-                        auxLabel,
-                        timeSpent,
-                        projectTitle,
-                        relatedAudits,
-                        areYouPL,
-                        comment
-                    ] = line.split(',');
+                try {
+                    const contents = e.target.result;
+                    const lines = contents.split('\n').slice(1); // Skip header row
+                    const validatedData = [];
+                    const errors = [];
 
-                    if (!timeSpent || timeSpent === "undefined") {
-                        console.error('Invalid timeSpent value:', timeSpent);
-                        return null;
+                    lines.forEach((line, index) => {
+                        if (!line.trim()) return;
+
+                        const columns = line.split(',').map(col => col.trim().replace(/^["']+|["']+$/g, ''));
+                        const rowNum = index + 2;
+
+                        try {
+                            // Construct full AUX label
+                            const fullAuxLabel = `${columns[3]} - ${columns[4]} - ${columns[5]}`;
+
+                            // Use the validateAuxLabelCombination function
+                            try {
+                                validateAuxLabelCombination(fullAuxLabel);
+                            } catch (auxError) {
+                                errors.push(`Row ${rowNum}: ${auxError.message}`);
+                                return;
+                            }
+
+                            // Validate Project Title only for Microsite Project Work
+                            if (columns[3] === 'Microsite Project Work') {
+                                if (!columns[8]) {
+                                    errors.push(`Row ${rowNum}: Project title is required for Microsite Project Work`);
+                                } else {
+                                    // Check project title format
+                                    const isValidFormat = /^\d+$/.test(columns[8]) ||
+                                          /^WF-\d+$/.test(columns[8]) ||
+                                          /^Microsite-\d+$/.test(columns[8]) ||
+                                          /^CL-.*$/.test(columns[8]) ||
+                                          /^QA-.*$/.test(columns[8]);
+
+                                    if (!isValidFormat) {
+                                        errors.push(`Row ${rowNum}: Invalid project title format`);
+                                    }
+                                }
+                            }
+
+                            // Validate Are You PL
+                            const validPLValues = ['Yes', 'No', 'N/A'];
+                            if (!validPLValues.includes(columns[10])) {
+                                errors.push(`Row ${rowNum}: Invalid 'Are You PL' value. Must be Yes, No, or N/A`);
+                            }
+
+                            // Validate Related Audits (must be numbers only)
+                            if (columns[9]) {
+                                const isNA = columns[9].trim().toUpperCase() === 'N/A';
+                                const isNumber = /^\d+$/.test(columns[9]);
+
+                                if (!isNA && !isNumber) {
+                                    errors.push(`Row ${rowNum}: Related audits must be either N/A or numbers only`);
+                                }
+                            }
+
+                            // Convert time values
+                            const timeMinutes = parseFloat(columns[6]);
+                            let timeSpent;
+
+                            if (!isNaN(timeMinutes)) {
+                                const hours = Math.floor(timeMinutes / 60);
+                                const minutes = Math.floor(timeMinutes % 60);
+                                const seconds = Math.floor((timeMinutes * 60) % 60);
+                                timeSpent = ((hours * 3600) + (minutes * 60) + seconds) * 1000; // Convert to milliseconds
+                            } else {
+                                timeSpent = 0;
+                            }
+
+                            // If no errors for this row, add to validated data
+                            if (!errors.some(error => error.includes(`Row ${rowNum}:`))) {
+                                validatedData.push({
+                                    date: columns[0],
+                                    weekNo: columns[1],
+                                    username: columns[2],
+                                    auxLabel: fullAuxLabel,
+                                    timeSpent: timeSpent,
+                                    projectTitle: columns[8] || 'N/A',
+                                    relatedAudits: columns[9] || 'N/A',
+                                    areYouPL: columns[10] || 'N/A',
+                                    comment: columns[11] || 'N/A',
+                                    site: columns[12] || 'N/A',
+                                    isEdited: "Yes",
+                                    editReason: reason,
+                                    loginTime: columns[15] || 'N/A',
+                                    logoutTime: columns[16] || 'N/A'
+                                });
+                            }
+
+                        } catch (error) {
+                            errors.push(`Row ${rowNum}: ${error.message}`);
+                        }
+                    });
+
+                    // If there are any validation errors, show them and stop
+                    if (errors.length > 0) {
+                        showCustomAlert(`Validation errors found:\n\n${errors.join('\n')}`);
+                        return;
                     }
 
-                    return {
-                        date,
-                        username,
-                        auxLabel,
-                        timeSpent: parseTime(timeSpent),
-                        projectTitle,
-                        relatedAudits,
-                        areYouPL,
-                        comment,
-                        isEdited: "Yes", // Add isEdited flag
-                        editReason: reason // Add edit reason
-                    };
-                }).filter(entry => entry && entry.date);
+                    // If all validations pass, proceed with restoration
+                    if (validatedData.length > 0) {
+                        const existingData = JSON.parse(localStorage.getItem('auxData')) || [];
+                        const combinedData = [...existingData, ...validatedData];
+                        localStorage.setItem('auxData', JSON.stringify(combinedData));
+                        localStorage.setItem('dataModified', 'true');
+                        showCustomAlert('CSV data restored successfully!');
+                        displayAUXData(true);
+                    } else {
+                        showCustomAlert('No valid data found in CSV file');
+                    }
 
-                const existingAuxDataString = localStorage.getItem('auxData');
-                let existingAuxData = existingAuxDataString ? JSON.parse(existingAuxDataString) : [];
-
-                existingAuxData = existingAuxData.filter(entry => entry.auxLabel !== 'Late Login');
-                const combinedAuxData = [...existingAuxData, ...restoredAuxData];
-
-                localStorage.setItem('auxData', JSON.stringify(combinedAuxData));
-                localStorage.setItem('lastRestoreTimestamp', Date.now());
-
-                console.log('AUX Data merged and restored to localStorage:', combinedAuxData);
-                showCustomAlert('AUX Data restored and merged');
-                localStorage.removeItem('manualAUXChange');
+                } catch (error) {
+                    console.error('Error processing CSV:', error);
+                    showCustomAlert('Error processing CSV file: ' + error.message);
+                }
             };
 
             reader.onerror = function() {
                 console.error('Error reading file:', reader.error);
+                showCustomAlert('Error reading CSV file');
             };
 
             reader.readAsText(file);
         });
     }
 
-    function exportToCSV() {
+
+    // Helper function to clean CSV field values
+    function cleanCSVField(field) {
+        if (!field) return '';
+        return field.replace(/^["']+|["']+$/g, '').trim();
+    }
+
+    function exportToCSV(isPostAWSExport = false) {
         try {
             let auxDataString = localStorage.getItem('auxData');
             let auxData = JSON.parse(auxDataString) || [];
             console.log('AUX Data from localStorage (Parsed):', auxData);
 
+            // Get the unique ID if available (means data was exported to AWS)
+            const uniqueId = localStorage.getItem('lastExportUniqueId');
+
+            // Load site mapping data first
+            const siteMap = loadMSSiteData();
+            const username = localStorage.getItem("currentUsername");
+
             const restoreTimestamp = localStorage.getItem('lastRestoreTimestamp');
+
+            const loginTime = localStorage.getItem('dailyLoginTime');
+            const logoutTime = localStorage.getItem('dailyLogoutTime');
 
             auxData = auxData.filter(entry => {
                 const entryDate = new Date(entry.date).getTime();
@@ -1547,25 +2016,237 @@
                 return true;
             });
 
-            auxData = auxData.filter(entry => entry.auxLabel !== 'undefined - N/A - N/A' && entry.date !== undefined);
+            auxData = auxData.filter(entry =>
+                                     entry.auxLabel !== 'undefined - N/A - N/A' &&
+                                     entry.date !== undefined
+                                    );
 
+            // Process and format each entry
+            const processedData = auxData.map(entry => {
+                // Ensure proper time conversion
+                const timeSpentInSeconds = entry.timeSpent / 1000;
+                const timeInMinutes = (timeSpentInSeconds / 60).toFixed(2);
+                const timeInHours = (timeSpentInSeconds / 3600).toFixed(2);
+
+                // Get week number
+                const weekNo = getWeekNumber(new Date(entry.date));
+
+                // Split AUX label into components with validation
+                const auxLabels = (entry.auxLabel || "N/A - N/A - N/A").split(' - ').map(label => {
+                    const trimmed = label.trim();
+                    if (!trimmed || trimmed === 'undefined' || /^\d{1,2}:\d{2}:\d{2}$/.test(trimmed)) {
+                        return 'N/A';
+                    }
+                    return trimmed;
+                });
+                while (auxLabels.length < 3) {
+                    auxLabels.push('N/A');
+                }
+
+                // Get site from mapping or use default
+                const site = siteMap[entry.username || username] || 'SESU';
+
+                // Format logout time
+                const isOffline = entry.auxLabel.toLowerCase().includes('offline');
+                const currentLogoutTime = isOffline ? (logoutTime || new Date().toLocaleTimeString()) : 'N/A';
+
+                return {
+                    'Date': entry.date,
+                    'Week No': weekNo,
+                    'Username': entry.username || username,
+                    'Aux Label 1': auxLabels[0],
+                    'Aux Label 2': auxLabels[1],
+                    'Aux Label 3': auxLabels[2],
+                    'Time (minutes)': timeInMinutes,
+                    'Time (hours)': timeInHours,
+                    'Project Title': entry.projectTitle || 'N/A',
+                    'Related Audits': entry.relatedAudits || 'N/A',
+                    'Are You the PL?': entry.areYouPL || 'N/A',
+                    'Comment': entry.comment || 'N/A',
+                    'Site': site,
+                    'Is Edited': entry.isEdited || 'N/A',
+                    'Edit Reason': entry.editReason || 'N/A',
+                    'Login Time (Local)': loginTime || 'N/A',
+                    'Logout Time (Local)': currentLogoutTime
+                };
+            });
+
+            // Create CSV headers
+            const headers = [
+                'Date',
+                'Week No',
+                'Username',
+                'Aux Label 1',
+                'Aux Label 2',
+                'Aux Label 3',
+                'Time (minutes)',
+                'Time (hours)',
+                'Project Title',
+                'Related Audits',
+                'Are You the PL?',
+                'Comment',
+                'Site',
+                'Is Edited',
+                'Edit Reason',
+                'Login Time (Local)',
+                'Logout Time (Local)'
+            ];
+
+            // Convert to CSV content with proper escaping
             const csvContent = "data:text/csv;charset=utf-8," +
-                  "Date,Username,AUX Label,Time Spent,Project Title,Related Audits,Are You PL,Comment,Is Edited,Edit Reason\n" +
-                  auxData.map(entry => {
-                      const username = entry.username || "Unknown User";
-                      return `${entry.date},${username},${entry.auxLabel},${formatTime(entry.timeSpent)},${entry.projectTitle},${entry.relatedAudits},${entry.areYouPL || ''},${entry.comment || ''},${entry.isEdited},${entry.editReason}`;
-                  }).join("\n");
+                  headers.join(',') + '\n' +
+                  processedData.map(row =>
+                                    headers.map(header => {
+                      const value = row[header] || '';
+                      return `"${value.toString().replace(/"/g, '""')}"`;
+                  }).join(',')
+                                   ).join('\n');
 
+            // Get username and format date
+            const today = new Date();
+            const dateStr = today.toISOString().split('T')[0];
+
+            // Create and trigger download with formatted filename
             const encodedUri = encodeURI(csvContent);
             const link = document.createElement('a');
             link.setAttribute('href', encodedUri);
-            link.setAttribute('download', 'aux_data.csv');
-            document.body.appendChild(link);
 
+            // Set felename based on whether this is after AWS export
+            if (isPostAWSExport) {
+                // If after AWS export, try to get the unique ID
+                const uniqueId = localStorage.getItem('dailyUniqueId');
+                if (uniqueId) {
+                    link.setAttribute('download', `aux_data_${username}_${dateStr}_${uniqueId}.csv`);
+                } else {
+                    link.setAttribute('download', `aux_data_${username}_${dateStr}.csv`);
+                }
+            } else {
+                // Regular download without unique ID
+                link.setAttribute('download', `aux_data_${username}_${dateStr}.csv`);
+            }
+
+            document.body.appendChild(link);
             link.click();
+            document.body.removeChild(link);
+
+            // Clear the current export unique ID if this was not post-AWS export
+            if (!isPostAWSExport) {
+                localStorage.removeItem('currentExportUniqueId');
+            }
+
         } catch (error) {
             console.error('Error exporting AUX data to CSV:', error);
+            showCustomAlert('Failed to export AUX data: ' + error.message);
         }
+    }
+
+
+    function separateAuxLabel(auxLabel) {
+        if (!auxLabel || typeof auxLabel !== 'string') {
+            return {
+                label1: 'N/A',
+                label2: 'N/A',
+                label3: 'N/A'
+            };
+        }
+
+        // Clean up the label first
+        const cleanLabel = auxLabel.trim();
+
+        // Split by delimiter and clean each part
+        const parts = cleanLabel.split(' - ').map(part => part.trim());
+
+        return {
+            label1: parts[0] || 'N/A',
+            label2: parts[1] || 'N/A',
+            label3: parts[2] || 'N/A'
+        };
+    }
+
+    // Helper function to load MS Sites data
+    function loadMSSiteData() {
+        return {
+            'mofila': 'HYD',
+            'thatikr': 'HYD',
+            'nshsx': 'HYD',
+            'artjoshi': 'HYD',
+            'kotnisai': 'HYD',
+            'mkkirth': 'HYD',
+            'ehemoham': 'HYD',
+            'khandavp': 'HYD',
+            'mshoib': 'HYD',
+            'mohaame': 'HYD',
+            'mohdhme': 'HYD',
+            'tirump': 'HYD',
+            'rajibdut': 'HYD',
+            'rhtng': 'HYD',
+            'shbzkh': 'HYD',
+            'shwetg': 'HYD',
+            'tvant': 'HYD',
+            'shendv': 'HYD',
+            'varalv': 'HYD',
+            'katsharm': 'HYD',
+            'albuquea': 'HYD',
+            'abollina': 'HYD',
+            'ayabhatt': 'HYD',
+            'mishayus': 'HYD',
+            'mdiahmed': 'HYD',
+            'maddirap': 'HYD',
+            'prembhar': 'HYD',
+            'rahulgi': 'HYD',
+            'chellemr': 'HYD',
+            'ramkeert': 'HYD',
+            'majurupg': 'HYD',
+            'shimontm': 'HYD',
+            'dasouv': 'HYD',
+            'bhaver': 'HYD',
+            'nangunon': 'HYD',
+            'purbitam': 'HYD',
+            'nitscd': 'DE',
+            'ebbraga': 'DE',
+            'haffaris': 'DE',
+            'metinees': 'DE',
+            'annherrm': 'DE',
+            'abdlahou': 'BCN',
+            'ammaurel': 'BCN',
+            'affalsap': 'BCN',
+            'herbrun': 'BCN',
+            'buenavef': 'BCN',
+            'grrulli': 'BCN',
+            'rccabbia': 'BCN',
+            'radilor': 'BCN',
+            'aalziat': 'BCN',
+            'scarlopa': 'BCN',
+            'guillaam': 'BCN',
+            'qiach': 'PEK',
+            'rongqing': 'PEK',
+            'danyangl': 'PEK',
+            'dongmwan': 'PEK',
+            'wdongxu': 'PEK',
+            'haiyabai': 'PEK',
+            'jingjieh': 'PEK',
+            'litia': 'PEK',
+            'lijul': 'PEK',
+            'lipinyua': 'PEK',
+            'ningwa': 'PEK',
+            'chngqc': 'PEK',
+            'jiqing': 'PEK',
+            'hongyun': 'PEK',
+            'runtingg': 'PEK',
+            'ruish': 'PEK',
+            'tnwang': 'PEK',
+            'weiwechu': 'PEK',
+            'yanxij': 'PEK',
+            'wuxiangj': 'PEK',
+            'yaxiongg': 'PEK',
+            'yuhatian': 'PEK',
+            'wyunhan': 'PEK',
+            'yunfeben': 'PEK',
+            'caifeng': 'PEK',
+            'zhewe': 'PEK',
+            'zizheng': 'PEK',
+            'heluo': 'PEK'
+        };
     }
     ///////////////////////////////////////////////////////////////
     function injectAuthStyles() {
@@ -1819,71 +2500,14 @@
     }
 
     async function authenticateAndExport() {
+        try {
+            injectAuthStyles();
+            await loadAwsSdk();
+            await loadCognitoSdk();
 
-        injectAuthStyles();
-        await loadCognitoSDK();
+            const modal = createAuthModal();
+            document.body.appendChild(modal);
 
-        const modal = document.createElement('div');
-        modal.innerHTML = `
-    <div class="auth-modal">
-        <div class="auth-modal-content">
-            <h2 class="auth-modal-title">Authentication Required</h2>
-
-            <div class="auth-input-container">
-                <input type="text"
-                    id="username"
-                    class="auth-input"
-                    placeholder="Enter your login"
-                    autocomplete="off">
-            </div>
-
-            <div class="auth-input-container">
-                <input type="password"
-                    id="password"
-                    class="auth-input"
-                    placeholder="Enter your password">
-                <button id="toggle-password" class="toggle-password-btn">
-                    <svg viewBox="0 0 24 24" class="eye-icon">
-                        <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
-                    </svg>
-                </button>
-            </div>
-
-            <div class="auth-button-container">
-                <button id="auth-submit" class="auth-submit-btn">Submit</button>
-                <button id="auth-cancel" class="auth-cancel-btn">Cancel</button>
-            </div>
-        </div>
-    </div>
-    `;
-
-        document.body.appendChild(modal);
-
-        document.getElementById('toggle-password').addEventListener('click', () => {
-            const passwordField = document.getElementById('password');
-            const toggleButton = document.getElementById('toggle-password');
-            const eyeIcon = toggleButton.querySelector('svg');
-
-            if (passwordField.type === 'password') {
-                passwordField.type = 'text';
-                eyeIcon.innerHTML = '<path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>';
-            } else {
-                passwordField.type = 'password';
-                eyeIcon.innerHTML = '<path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>';
-            }
-        });
-
-        const inputs = modal.querySelectorAll('.auth-input');
-        inputs.forEach(input => {
-            input.addEventListener('focus', () => {
-                input.style.transform = 'translateY(-1px)';
-            });
-            input.addEventListener('blur', () => {
-                input.style.transform = 'translateY(0)';
-            });
-        });
-
-        return new Promise((resolve) => {
             document.getElementById('auth-submit').addEventListener('click', async () => {
                 const username = document.getElementById('username').value.trim();
                 const password = document.getElementById('password').value.trim();
@@ -1903,7 +2527,7 @@
                     console.log('Retrieved token:', token);
                     const auxDataString = localStorage.getItem('auxData');
                     let auxData = JSON.parse(auxDataString) || [];
-                    console.log('AUX Data:', auxData);
+                    console.log('Original AUX Data:', auxData);
 
                     const restoreTimestamp = localStorage.getItem('lastRestoreTimestamp');
                     auxData = auxData.filter(entry => {
@@ -1916,14 +2540,104 @@
                         return true;
                     });
 
-                    auxData = auxData.filter(entry => entry.auxLabel !== 'undefined - N/A - N/A' && entry.date !== undefined);
+                    auxData = auxData.filter(entry =>
+                                             entry.auxLabel !== 'undefined - N/A - N/A' &&
+                                             entry.date !== undefined
+                                            );
 
-                    const csvContent = 'Date,Username,AUX Label,Time Spent,Project Title,Related Audits,Are You PL,Comment,Is Edited,Edit Reason\n' +
-                          auxData.map(entry => {
-                              const username = entry.username || "Unknown User";
-                              return `${entry.date},${username},${entry.auxLabel},${formatTime(entry.timeSpent)},${entry.projectTitle},${entry.relatedAudits},${entry.areYouPL || ''},${entry.comment || ''},${entry.isEdited},${entry.editReason}`;
-                          }).join("\n");
+                    const exportedTime = new Date().toLocaleTimeString('en-US', {
+                        hour: 'numeric',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: true
+                    });
 
+                    // Create CSV rows array with headers
+                    const csvRows = [];
+                    csvRows.push([
+                        'Date',
+                        'Week No',
+                        'Username',
+                        'Aux Label 1',
+                        'Aux Label 2',
+                        'Aux Label 3',
+                        'Time (minutes)',
+                        'Time (hours)',
+                        'Project Title',
+                        'Related Audits',
+                        'Are You the PL?',
+                        'Comment',
+                        'Site',
+                        'Is Edited',
+                        'Edit Reason',
+                        'Login Time (Local)',
+                        'Logout Time (Local)',
+                        'Exported Time'
+                    ].join(','));
+
+                    // Process each entry
+                    auxData.forEach(entry => {
+                        try {
+                            const loginTime = localStorage.getItem('dailyLoginTime');
+                            const logoutTime = localStorage.getItem('dailyLogoutTime');
+                            const isOffline = entry.auxLabel.toLowerCase().includes('offline');
+                            const currentLogoutTime = isOffline ?
+                                  (logoutTime || new Date().toLocaleTimeString()) : 'N/A';
+
+                            // Split AUX Label safely
+                            let auxLabels = ['N/A', 'N/A', 'N/A'];
+                            if (entry.auxLabel) {
+                                const labels = entry.auxLabel.split(' - ');
+                                auxLabels = [
+                                    labels[0] || 'N/A',
+                                    labels[1] || 'N/A',
+                                    labels[2] || 'N/A'
+                                ];
+                            }
+
+                            // Convert time values properly
+                            let timeMinutes = entry.timeMinutes;
+                            if (typeof entry.timeSpent === 'number') {
+                                // If timeSpent is in milliseconds, convert to minutes
+                                timeMinutes = (entry.timeSpent / (1000 * 60)).toFixed(2);
+                            } else if (typeof entry.timeSpent === 'string' && entry.timeSpent.includes(':')) {
+                                // If timeSpent is in HH:MM:SS format
+                                const [hours, minutes, seconds] = entry.timeSpent.split(':').map(Number);
+                                timeMinutes = (hours * 60 + minutes + seconds/60).toFixed(2);
+                            }
+
+                            const timeHours = (parseFloat(timeMinutes) / 60).toFixed(2);
+
+                            // Create row with proper escaping and time values
+                            const row = [
+                                escapeCSVField(entry.date),
+                                escapeCSVField(entry.weekNo || getWeekNumber(new Date(entry.date))),
+                                escapeCSVField(entry.username || "Unknown User"),
+                                escapeCSVField(auxLabels[0]),
+                                escapeCSVField(auxLabels[1]),
+                                escapeCSVField(auxLabels[2]),
+                                escapeCSVField(timeMinutes),
+                                escapeCSVField(timeHours),
+                                escapeCSVField(entry.projectTitle || 'N/A'),
+                                escapeCSVField(entry.relatedAudits || 'N/A'),
+                                escapeCSVField(entry.areYouPL || 'N/A'),
+                                escapeCSVField(entry.comment || 'N/A'),
+                                escapeCSVField(entry.site || 'SESU'),
+                                escapeCSVField(entry.isEdited || 'N/A'),
+                                escapeCSVField(entry.editReason || 'N/A'),
+                                escapeCSVField(loginTime),
+                                escapeCSVField(currentLogoutTime),
+                                escapeCSVField(exportedTime)
+                            ];
+
+                            csvRows.push(row.join(','));
+                        } catch (rowError) {
+                            console.error('Error processing row:', rowError, entry);
+                        }
+                    });
+
+                    // Join all rows with newlines
+                    const csvContent = csvRows.join('\n');
                     console.log('CSV Content:', csvContent);
 
                     const response = await fetch('https://09umyreyjb.execute-api.eu-north-1.amazonaws.com/Prod/auxData', {
@@ -1940,8 +2654,30 @@
                     }
 
                     modal.remove();
-                    showCustomAlert('NPT Data successfully sent to AWS');
+
+                    // Record the export and get unique ID
+                    const uniqueId = await recordAWSExport();
+
+                    if (uniqueId) {
+                        showCustomAlert('NPT Data successfully sent to AWS');
+
+                        // Download CSV with unique ID
+                        const username = localStorage.getItem("currentUsername");
+                        const dateStr = new Date().toISOString().split('T')[0];
+
+                        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                        const url = URL.createObjectURL(blob);
+                        const link = document.createElement('a');
+                        link.setAttribute('href', url);
+                        link.setAttribute('download', `aux_data_${username}_${dateStr}_${uniqueId}.csv`);
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        URL.revokeObjectURL(url);
+                    }
+
                     localStorage.setItem('isDataSent', 'true');
+
                 } catch (error) {
                     console.error('Error during AWS export:', error);
                     submitBtn.textContent = 'Submit';
@@ -1949,8 +2685,6 @@
                     submitBtn.disabled = false;
                     showCustomAlert('Failed to export NPT data. Please check your credentials or try again later.');
                 }
-
-                resolve();
             });
 
             document.getElementById('auth-cancel').addEventListener('click', () => {
@@ -1958,10 +2692,13 @@
                 authModal.style.opacity = '0';
                 setTimeout(() => {
                     modal.remove();
-                    resolve();
                 }, 300);
             });
-        });
+
+        } catch (error) {
+            console.error('Error in authenticateAndExport:', error);
+            showCustomAlert('Failed to initialize export process');
+        }
     }
     ///////////////////////////////////////////////////////////////
     // Import from AWS
@@ -2307,6 +3044,10 @@
                 const dateRange = await selectDateRange();
                 startDateTime = dateRange.startDateTime;
                 endDateTime = dateRange.endDateTime;
+                console.log('Selected date range:', {
+                    start: new Date(startDateTime).toISOString(),
+                    end: new Date(endDateTime).toISOString()
+                });
             } catch (err) {
                 console.error('Date range selection error:', err);
                 return;
@@ -2317,129 +3058,159 @@
             if (!username) {
                 throw new Error('Username not found');
             }
+            console.log('Searching for data for username:', username);
 
-            console.log('Search parameters:', {
-                username,
-                startDateTime: new Date(startDateTime).toISOString(),
-                endDateTime: new Date(endDateTime).toISOString()
-            });
-
-            // Authenticate user
+            // Authentication
             const token = await AuthService.ensureAuthenticated();
             await configureAWS(token);
             if (!token) throw new Error('Authentication failed');
-
-            // Configure AWS
-            AWS.config.update({
-                region: 'eu-north-1',
-                credentials: new AWS.CognitoIdentityCredentials({
-                    IdentityPoolId: 'eu-north-1:98c07095-e731-4219-bebe-db4dab892ea8',
-                    Logins: {
-                        'cognito-idp.eu-north-1.amazonaws.com/eu-north-1_V9kLPNVXl': token
-                    }
-                })
-            });
-
-            // Wait for credentials to be initialized
-            await new Promise((resolve, reject) => {
-                AWS.config.credentials.get(err => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-
-            // Initialize variables
-            const s3 = new AWS.S3();
-            const bucketName = 'aux-data-bucket';
-            const prefixes = ['Aura_NPT_', 'aux_data_'];
-            const relevantData = [];
 
             // Show loading indicator
             const loadingIndicator = createLoadingIndicator();
             document.body.appendChild(loadingIndicator);
 
             try {
-                // Load site mapping once
-                const siteMap = await loadMSSitesData();
-                console.log('Loaded site mapping:', siteMap);
+                const s3 = new AWS.S3();
+                const bucketName = 'aux-data-bucket';
+                const relevantData = [];
 
-                for (const prefix of prefixes) {
-                    console.log(`Processing prefix: ${prefix}`);
+                // 1. First check Aura_NPT_ files
+                console.log('Checking Aura_NPT_ files...');
+                const auraNptResponse = await s3.listObjectsV2({
+                    Bucket: bucketName,
+                    Prefix: 'Aura_NPT_'
+                }).promise();
 
-                    const listedObjects = await s3.listObjectsV2({
+                // Process Aura_NPT_ files
+                for (const item of auraNptResponse.Contents) {
+                    const fileData = await s3.getObject({
                         Bucket: bucketName,
-                        Prefix: prefix
+                        Key: item.Key
                     }).promise();
 
-                    console.log(`Found ${listedObjects.Contents.length} files for prefix ${prefix}`);
+                    const rows = fileData.Body.toString('utf-8').split('\n');
 
-                    for (const item of listedObjects.Contents) {
-                        console.log(`Processing file: ${item.Key}`);
+                    // Skip header row and process each row
+                    for (let i = 1; i < rows.length; i++) {
+                        const row = rows[i].trim();
+                        if (!row) continue;
 
-                        const fileData = await s3.getObject({
-                            Bucket: bucketName,
-                            Key: item.Key
-                        }).promise();
+                        const columns = row.split(',').map(col => col.trim());
+                        if (columns.length < 13) continue; // Ensure minimum columns exist
 
-                        const fileContent = fileData.Body.toString('utf-8');
-                        const rows = fileContent.split('\n');
-                        console.log(`File contains ${rows.length} rows`);
-
-                        // Skip header row
-                        for (let i = 1; i < rows.length; i++) {
-                            const row = rows[i].trim();
-                            if (!row) {
-                                console.log(`Skipping empty row ${i}`);
-                                continue;
-                            }
-
-                            const columns = row.split(',').map(col => col.trim());
-                            if (columns.length < 4) {
-                                console.log(`Skipping invalid row ${i}: insufficient columns`);
-                                continue;
-                            }
-
-                            let processedRow;
-                            if (item.Key.startsWith('Aura_NPT_')) {
-                                console.log(`Processing Aura NPT row ${i}`);
-                                processedRow = await processAuraNPTRow(columns, username, startDateTime, endDateTime, siteMap);
-                            } else {
-                                console.log(`Processing aux_data row ${i}`);
-                                processedRow = await processAuxDataRow(columns, username, startDateTime, endDateTime, siteMap);
-                            }
-
-                            if (processedRow) {
-                                console.log(`Successfully processed row ${i}:`, processedRow);
-                                relevantData.push(processedRow);
-                            } else {
-                                console.log(`Row ${i} skipped or failed processing`);
+                        // Check if row belongs to current user and falls within date range
+                        if (columns[2] === username) {
+                            const rowDate = new Date(columns[0]);
+                            if (rowDate >= new Date(startDateTime) && rowDate <= new Date(endDateTime)) {
+                                relevantData.push({
+                                    Date: columns[0],
+                                    'Week No': columns[1],
+                                    Username: columns[2],
+                                    'Aux Label 1': columns[3],
+                                    'Aux Label 2': columns[4],
+                                    'Aux Label 3': columns[5],
+                                    'Time (minutes)': columns[6],
+                                    'Time (hours)': columns[7],
+                                    'Project Title': columns[8],
+                                    'Related Audits': columns[9],
+                                    'Are You the PL?': columns[10],
+                                    Comment: columns[11],
+                                    Site: columns[12],
+                                    'Is Edited': columns[13] || 'N/A',
+                                    'Edit Reason': columns[14] || '',
+                                    'Login Time (Local)': columns[15] || 'N/A',
+                                    'Logout Time (Local)': columns[16] || 'N/A',
+                                    'Exported Time': columns[17] || 'N/A'
+                                });
                             }
                         }
                     }
                 }
 
-                console.log(`Total relevant data found: ${relevantData.length} rows`);
+                // 2. Then check aux_data_ files with username pattern
+                console.log('Checking aux_data_ files...');
+                const auxDataPrefix = `aux_data_${username}_`;
+                const auxDataResponse = await s3.listObjectsV2({
+                    Bucket: bucketName,
+                    Prefix: auxDataPrefix
+                }).promise();
+
+                // Process aux_data_ files
+                for (const item of auxDataResponse.Contents) {
+                    const fileData = await s3.getObject({
+                        Bucket: bucketName,
+                        Key: item.Key
+                    }).promise();
+
+                    const rows = fileData.Body.toString('utf-8').split('\n');
+
+                    // Skip header row and process each row
+                    for (let i = 1; i < rows.length; i++) {
+                        const row = rows[i].trim();
+                        if (!row) continue;
+
+                        const columns = row.split(',').map(col => col.trim());
+                        if (columns.length < 13) continue;
+
+                        const rowDate = new Date(columns[0]);
+                        if (rowDate >= new Date(startDateTime) && rowDate <= new Date(endDateTime)) {
+                            relevantData.push({
+                                Date: columns[0],
+                                'Week No': columns[1],
+                                Username: columns[2],
+                                'Aux Label 1': columns[3],
+                                'Aux Label 2': columns[4],
+                                'Aux Label 3': columns[5],
+                                'Time (minutes)': columns[6],
+                                'Time (hours)': columns[7],
+                                'Project Title': columns[8],
+                                'Related Audits': columns[9],
+                                'Are You the PL?': columns[10],
+                                Comment: columns[11],
+                                Site: columns[12],
+                                'Is Edited': columns[13] || 'N/A',
+                                'Edit Reason': columns[14] || '',
+                                'Login Time (Local)': columns[15] || 'N/A',
+                                'Logout Time (Local)': columns[16] || 'N/A',
+                                'Exported Time': columns[17] || 'N/A'
+                            });
+                        }
+                    }
+                }
+
+                console.log(`Found ${relevantData.length} matching entries`);
 
                 if (relevantData.length > 0) {
-                    // Sort data by date before downloading
-                    relevantData.sort((a, b) => {
-                        const dateA = new Date(a.Date);
-                        const dateB = new Date(b.Date);
-                        return dateA - dateB;
-                    });
+                    // Sort data by date
+                    relevantData.sort((a, b) => new Date(a.Date) - new Date(b.Date));
 
-                    downloadCSV(relevantData, startDateTime, endDateTime, username);
+                    // Create CSV content
+                    const headers = [
+                        'Date', 'Week No', 'Username', 'Aux Label 1', 'Aux Label 2', 'Aux Label 3',
+                        'Time (minutes)', 'Time (hours)', 'Project Title', 'Related Audits',
+                        'Are You the PL?', 'Comment', 'Site', 'Is Edited', 'Edit Reason',
+                        'Login Time (Local)', 'Logout Time (Local)', 'Exported Time'
+                    ];
+
+                    const csvContent = [
+                        headers.join(','),
+                        ...relevantData.map(row => headers.map(header =>
+                                                               `"${(row[header] || '').toString().replace(/"/g, '""')}"`
+                    ).join(','))
+                    ].join('\n');
+
+                    // Download the CSV
+                    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.setAttribute('href', url);
+                    link.setAttribute('download', `aux_data_${username}_${new Date(startDateTime).toISOString().split('T')[0]}_to_${new Date(endDateTime).toISOString().split('T')[0]}.csv`);
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+
                     showCustomAlert('Data downloaded successfully!');
                 } else {
-                    console.log('No data found. Final debug info:', {
-                        dateRange: {
-                            start: new Date(startDateTime).toISOString(),
-                            end: new Date(endDateTime).toISOString()
-                        },
-                        username,
-                        prefixesChecked: prefixes,
-                        siteMapping: !!siteMap
-                    });
                     showCustomAlert('No data found for the selected date range');
                 }
 
@@ -2453,13 +3224,13 @@
             console.error('Error in importFromAws:', error);
             showCustomAlert('Failed to import data: ' + error.message);
 
-            // Remove loading indicator if it exists
             const loadingIndicator = document.querySelector('.loading-indicator');
             if (loadingIndicator && document.body.contains(loadingIndicator)) {
                 document.body.removeChild(loadingIndicator);
             }
         }
     }
+
 
     // Add error handling for AWS SDK and Cognito SDK loading
     window.addEventListener('error', function(event) {
@@ -2468,7 +3239,6 @@
             showCustomAlert('Failed to load required dependencies. Please try again.');
         }
     });
-
 
     async function processAuraNPTRow(columns, username, startDateTime, endDateTime) {
         try {
@@ -2762,8 +3532,8 @@
         <div class="loading-text">Please wait...</div>
     `;
 
-            const style = document.createElement('style');
-            style.textContent = `
+        const style = document.createElement('style');
+        style.textContent = `
         .loading-indicator {
             position: fixed;
             top: 50%;
@@ -2798,10 +3568,10 @@
             100% { transform: rotate(360deg); }
         }
     `;
-            document.head.appendChild(style);
+        document.head.appendChild(style);
 
-            return loadingIndicator;
-        }
+        return loadingIndicator;
+    }
 
     function createAuthModal() {
         const modal = document.createElement('div');
@@ -2851,6 +3621,793 @@
         return modal;
     }
     ///////////////////////////////////////////////////////////////
+    // Function to generate daily unique IDs for users
+    async function generateDailyUniqueId() {
+        try {
+            const username = localStorage.getItem("currentUsername");
+            const today = new Date().toISOString().split('T')[0];
+            const s3 = new AWS.S3();
+
+            // First, check if an ID already exists for today
+            try {
+                const existingRecord = await s3.getObject({
+                    Bucket: 'real-time-databucket',
+                    Key: `unique-ids/${username}/${today}.json`
+            }).promise();
+
+                const existingData = JSON.parse(existingRecord.Body.toString());
+
+                // If we already have an ID for today, return it
+                if (existingData.uniqueId) {
+                    console.log('Retrieved existing unique ID for today');
+                    return existingData.uniqueId;
+                }
+            } catch (error) {
+                // If no record exists (NoSuchKey) or other error, continue to generate new ID
+                if (error.code !== 'NoSuchKey') {
+                    console.error('Error checking existing ID:', error);
+                }
+            }
+
+            // Only generate new ID if one doesn't exist
+            const uniqueId = `NPT-${today}-${username}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+
+            const idRecord = {
+                username: username,
+                date: today,
+                uniqueId: uniqueId,
+                status: 'not verified',
+                generatedAt: new Date().toISOString()
+            };
+
+            // Store in AWS
+            await s3.putObject({
+                Bucket: 'real-time-databucket',
+                Key: `unique-ids/${username}/${today}.json`,
+                Body: JSON.stringify(idRecord),
+                ContentType: 'application/json'
+            }).promise();
+
+            console.log('Generated new unique ID');
+            return uniqueId;
+        } catch (error) {
+            console.error('Error in generateDailyUniqueId:', error);
+            throw error;
+        }
+    }
+
+    // Generate deterministic ID based on username and date
+    async function generateDeterministicId(username, date) {
+        const baseString = `${username}-${date}-NPT`;
+
+        // Create a deterministic but secure hash
+        const encoder = new TextEncoder();
+        const data = encoder.encode(baseString);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+
+        // Convert to readable format
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+        // Create a shorter, readable ID
+        return `NPT-${hashHex.slice(0, 6)}-${date.split('-')[2]}`;
+    }
+
+    // Function to get or generate unique ID
+    async function getOrGenerateUniqueId() {
+        try {
+            const s3 = new AWS.S3();
+            const username = localStorage.getItem("currentUsername");
+            const today = new Date().toISOString().split('T')[0];
+
+            // Try to get existing ID
+            try {
+                const existingId = await s3.getObject({
+                    Bucket: 'real-time-databucket',
+                    Key: `unique-ids/${username}/${today}.json`
+            }).promise();
+
+                const idRecord = JSON.parse(existingId.Body.toString());
+
+                // If ID exists and unused, return it
+                if (idRecord.status === 'unused') {
+                    return idRecord.uniqueId;
+                }
+            } catch (error) {
+                if (error.code !== 'NoSuchKey') {
+                    throw error;
+                }
+            }
+
+            // If no valid ID exists, generate new one
+            return generateDailyUniqueId();
+        } catch (error) {
+            console.error('Error getting unique ID:', error);
+            throw error;
+        }
+    }
+
+    // Function to mark ID as used
+    async function markIdAsUsed(uniqueId) {
+        try {
+            const s3 = new AWS.S3();
+            const username = localStorage.getItem("currentUsername");
+            const today = new Date().toISOString().split('T')[0];
+
+            const idRecord = {
+                username: username,
+                date: today,
+                uniqueId: uniqueId,
+                status: 'used',
+                usedAt: new Date().toISOString()
+            };
+
+            await s3.putObject({
+                Bucket: 'real-time-databucket',
+                Key: `unique-ids/${username}/${today}.json`,
+                Body: JSON.stringify(idRecord),
+                ContentType: 'application/json'
+            }).promise();
+
+        } catch (error) {
+            console.error('Error marking ID as used:', error);
+            throw error;
+        }
+    }
+
+    async function verifyExportFile(filename) {
+        try {
+            // Extract information from filename
+            const match = filename.match(/aux_data_(.+)_(\d{4}-\d{2}-\d{2})_(.+)\.csv/);
+            if (!match) {
+                return { valid: false, reason: 'Invalid filename format' };
+            }
+
+            const [_, username, date, providedId] = match;
+
+            // Get the record for this user and date
+            const s3 = new AWS.S3();
+            try {
+                const record = await s3.getObject({
+                    Bucket: 'real-time-databucket',
+                    Key: `unique-ids/${username}/${date}.json`
+            }).promise();
+
+                const idRecord = JSON.parse(record.Body.toString());
+
+                // Verify the ID matches and was used
+                if (idRecord.uniqueId !== providedId) {
+                    return {
+                        valid: false,
+                        reason: 'Invalid unique ID for this user and date'
+                    };
+                }
+
+                if (idRecord.status !== 'used') {
+                    return {
+                        valid: false,
+                        reason: 'Export ID exists but was never used'
+                    };
+                }
+
+                return {
+                    valid: true,
+                    exportTime: idRecord.usedAt
+                };
+
+            } catch (error) {
+                if (error.code === 'NoSuchKey') {
+                    return {
+                        valid: false,
+                        reason: 'No export record found for this date'
+                    };
+                }
+                throw error;
+            }
+        } catch (error) {
+            console.error('Error verifying export file:', error);
+            throw error;
+        }
+    }
+
+    // Add verification to export history dashboard
+    function addVerificationToHistory() {
+        const verifyButton = document.createElement('button');
+        verifyButton.textContent = 'Verify File';
+        verifyButton.onclick = async () => {
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.accept = '.csv';
+
+            fileInput.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const result = await verifyExportFile(file.name);
+                    if (result.valid) {
+                        showCustomAlert(`Valid export file! Exported on: ${new Date(result.exportTime).toLocaleString()}`);
+                    } else {
+                        showCustomAlert(`Invalid export file: ${result.reason}`);
+                    }
+                }
+            };
+
+            fileInput.click();
+        };
+
+        // Add to your export history dashboard
+        document.querySelector('.dashboard-actions').appendChild(verifyButton);
+    }
+
+    //Function to record NPT Export history
+    async function recordAWSExport() {
+        try {
+            await loadAwsSdk();
+            await loadCognitoSdk();
+
+            const token = await AuthService.ensureAuthenticated();
+            await configureAWS(token);
+
+            const s3 = new AWS.S3();
+            const username = localStorage.getItem("currentUsername");
+            const timestamp = new Date().toISOString();
+            const today = timestamp.split('T')[0];
+
+            // First, check for existing unique ID in AWS
+            let uniqueId;
+            try {
+                const existingRecord = await s3.getObject({
+                    Bucket: 'real-time-databucket',
+                    Key: `unique-ids/${username}/${today}.json`
+            }).promise();
+
+                const existingData = JSON.parse(existingRecord.Body.toString());
+                uniqueId = existingData.uniqueId;
+
+            } catch (error) {
+                if (error.code === 'NoSuchKey') {
+                    // If no ID exists, generate one using generateDailyUniqueId
+                    uniqueId = await generateDailyUniqueId();
+                } else {
+                    throw error;
+                }
+            }
+
+            if (!uniqueId) {
+                throw new Error('Failed to get or generate unique ID');
+            }
+
+            // Update the unique ID record to mark it as verified
+            const updatedIdRecord = {
+                username: username,
+                date: today,
+                uniqueId: uniqueId,
+                status: 'verified',
+                verifiedAt: timestamp,
+                exportTimestamp: timestamp
+            };
+
+            // Update the unique ID record
+            await s3.putObject({
+                Bucket: 'real-time-databucket',
+                Key: `unique-ids/${username}/${today}.json`,
+                Body: JSON.stringify(updatedIdRecord),
+                ContentType: 'application/json'
+            }).promise();
+
+            // Record the export event
+            const exportRecord = {
+                username: username,
+                timestamp: timestamp,
+                exportType: 'NPT Data',
+                status: true,
+                uniqueId: uniqueId,
+                lastModified: timestamp
+            };
+
+            // Store the export record
+            await s3.putObject({
+                Bucket: 'real-time-databucket',
+                Key: `export-logs/${username}/${timestamp}.json`,
+                Body: JSON.stringify(exportRecord),
+                ContentType: 'application/json'
+            }).promise();
+
+            // Store current export details in localStorage
+            localStorage.setItem('lastExportDetails', JSON.stringify({
+                timestamp: timestamp,
+                uniqueId: uniqueId
+            }));
+
+            // Also ensure the unique ID is stored in localStorage
+            localStorage.setItem('dailyUniqueId', uniqueId);
+
+            console.log('Export recorded successfully:', {
+                username: username,
+                timestamp: timestamp,
+                uniqueId: uniqueId,
+                status: 'verified'
+            });
+
+            return uniqueId;
+
+        } catch (error) {
+            console.error('Error recording export:', error);
+
+            // Handle failed export
+            try {
+                const failureTimestamp = new Date().toISOString();
+                const failedExportRecord = {
+                    username: localStorage.getItem("currentUsername"),
+                    timestamp: failureTimestamp,
+                    exportType: 'NPT Data',
+                    status: false,
+                    error: error.message,
+                    uniqueId: localStorage.getItem('dailyUniqueId') || null
+                };
+
+                const s3 = new AWS.S3();
+                await s3.putObject({
+                    Bucket: 'real-time-databucket',
+                    Key: `export-logs/failed/${failureTimestamp}.json`,
+                    Body: JSON.stringify(failedExportRecord),
+                    ContentType: 'application/json'
+                }).promise();
+
+            } catch (recordError) {
+                console.error('Error recording failed export:', recordError);
+            }
+
+            throw error; // Re-throw the error for handling by the caller
+        }
+    }
+
+    async function showExportHistory() {
+        try {
+            await loadAwsSdk();
+            await loadCognitoSdk();
+
+            const token = await AuthService.ensureAuthenticated();
+            await configureAWS(token);
+
+            // Create modal container
+            const modal = document.createElement('div');
+            modal.className = 'export-history-modal';
+            modal.innerHTML = `
+    <div class="modal-content">
+        <header class="modal-header">
+            <h2>NPT Export History</h2>
+            <div class="filter-container">
+                <div class="date-filters">
+                    <input type="date" id="startDate" class="date-input">
+                    <span class="date-separator">to</span>
+                    <input type="date" id="endDate" class="date-input">
+                </div>
+                <div class="search-container">
+                    <input type="text" id="exportSearchInput" placeholder="Search by username...">
+                </div>
+            </div>
+            <button class="close-btn">×</button>
+        </header>
+        <div class="table-container">
+            <table class="export-history-table">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Export Date</th>
+                        <th>Export Time</th>
+                        <th>Unique ID</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="exportHistoryBody">
+                    <tr>
+                        <td colspan="5">Loading...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    `;
+
+            // Add styles
+            const styles = document.createElement('style');
+            styles.textContent = `
+            .export-history-modal {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.85);
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                z-index: 10004;
+            }
+
+            .modal-content {
+                background: #1a1a1a;
+                width: 90%;
+                max-width: 1000px;
+                max-height: 80vh;
+                border-radius: 12px;
+                padding: 20px;
+                color: white;
+                box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+            }
+
+            .modal-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 20px;
+            }
+
+            .search-container {
+                flex: 1;
+                margin: 0 20px;
+            }
+
+            #exportSearchInput {
+                width: 100%;
+                padding: 8px 12px;
+                border: none;
+                border-radius: 6px;
+                background: rgba(255, 255, 255, 0.1);
+                color: white;
+            }
+
+            .table-container {
+                max-height: calc(80vh - 100px);
+                overflow-y: auto;
+            }
+
+            .export-history-table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 10px;
+            }
+
+            .export-history-table th,
+            .export-history-table td {
+                padding: 12px;
+                text-align: left;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            }
+
+            .export-history-table th {
+                background: rgba(255, 255, 255, 0.05);
+                font-weight: bold;
+            }
+
+            .export-history-table tr:hover {
+                background: rgba(255, 255, 255, 0.05);
+            }
+
+            .close-btn {
+                background: none;
+                border: none;
+                color: white;
+                font-size: 24px;
+                cursor: pointer;
+                padding: 0;
+                width: 30px;
+                height: 30px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .close-btn:hover {
+                background: rgba(255, 255, 255, 0.1);
+            }
+
+            .status-success {
+                color: #4CAF50;
+            }
+
+            .status-failed {
+                color: #f44336;
+            }
+
+    .filter-container {
+        flex: 1;
+        display: flex;
+        gap: 20px;
+        align-items: center;
+        margin: 0 20px;
+    }
+
+    .date-filters {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: rgba(255, 255, 255, 0.05);
+        padding: 5px 10px;
+        border-radius: 6px;
+    }
+
+.date-input {
+    padding: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    background: #1a1a1a; // Changed this from rgba(255, 255, 255, 0.1)
+    color: white;
+    font-size: 14px;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.3s ease;
+}
+
+.date-input:hover {
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.date-input:focus {
+    border-color: #4CAF50;
+    box-shadow: 0 0 0 1px rgba(76, 175, 80, 0.2);
+}
+
+.date-input::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity 0.3s ease;
+}
+
+.date-input::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+}
+
+    .date-separator {
+        color: rgba(255, 255, 255, 0.6);
+    }
+
+    .search-container {
+        flex: 1;
+    }
+        `;
+            document.head.appendChild(styles);
+            document.body.appendChild(modal);
+
+            // Load export history
+            const s3 = new AWS.S3();
+            const response = await s3.listObjects({
+                Bucket: 'real-time-databucket',
+                Prefix: 'export-logs/'
+            }).promise();
+
+            const exports = await Promise.all(response.Contents.map(async (item) => {
+                try {
+                    const data = await s3.getObject({
+                        Bucket: 'real-time-databucket',
+                        Key: item.Key
+                    }).promise();
+                    return JSON.parse(data.Body.toString());
+                } catch (error) {
+                    console.error('Error fetching export record:', error);
+                    return null;
+                }
+            }));
+
+            // Filter out null values and sort by timestamp
+            const validExports = exports
+            .filter(exp => exp !== null && exp.username) // Add validation here
+            .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+
+            // Update table with data
+            function updateTable(searchTerm = '') {
+                const tbody = document.getElementById('exportHistoryBody');
+                const startDate = document.getElementById('startDate').value;
+                const endDate = document.getElementById('endDate').value;
+
+                const filteredExports = validExports.filter(exp => {
+                    // Add null check for exp and exp.username
+                    if (!exp || !exp.username) return false;
+
+                    const exportDate = new Date(exp.timestamp);
+                    const meetsDateCriteria = (!startDate || exportDate >= new Date(startDate)) &&
+                          (!endDate || exportDate <= new Date(endDate + 'T23:59:59'));
+                    const meetsSearchCriteria = exp.username.toLowerCase().includes(searchTerm.toLowerCase());
+
+                    return meetsDateCriteria && meetsSearchCriteria;
+                });
+
+
+                tbody.innerHTML = filteredExports.map(exp => {
+                    const date = new Date(exp.timestamp);
+
+                    // Verify if this ID matches the pre-generated ID for this user and date
+                    const isPreGeneratedId = verifyPreGeneratedId(exp.username, date.toISOString().split('T')[0], exp.uniqueId);
+
+                    // Add verification status to the display
+                    const verificationStatus = isPreGeneratedId ?
+                          '<span class="verification-badge verified" title="Verified Pre-generated ID">✓</span>' :
+                    '<span class="verification-badge unverified" title="Unverified ID">?</span>';
+
+                    return `
+            <tr>
+                <td>${exp.username}</td>
+                <td>${date.toLocaleDateString()}</td>
+                <td>${date.toLocaleTimeString()}</td>
+                <td>
+                    <div class="id-container">
+                        <span class="unique-id ${isPreGeneratedId ? 'verified' : 'unverified'}"
+                              title="Click to copy"
+                              onclick="copyToClipboard('${exp.uniqueId}')">
+                            ${exp.uniqueId}
+                        </span>
+                        ${verificationStatus}
+                    </div>
+                </td>
+                <td class="status-${exp.status ? 'success' : 'failed'}">
+                    ${exp.status ? 'Success' : 'Failed'}
+                </td>
+            </tr>
+        `;
+                }).join('') || '<tr><td colspan="5">No records found</td></tr>';
+
+                // Add styles for verification badges
+                if (!document.getElementById('verification-styles')) {
+                    const styles = document.createElement('style');
+                    styles.id = 'verification-styles';
+                    styles.textContent = `
+            .id-container {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .unique-id {
+                padding: 4px 8px;
+                border-radius: 4px;
+                transition: all 0.3s ease;
+            }
+
+            .unique-id.verified {
+                background: rgba(76, 175, 80, 0.1);
+                border: 1px solid rgba(76, 175, 80, 0.2);
+            }
+
+            .unique-id.unverified {
+                background: rgba(255, 152, 0, 0.1);
+                border: 1px solid rgba(255, 152, 0, 0.2);
+            }
+
+
+            .verification-badge {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 20px;
+                height: 20px;
+                border-radius: 50%;
+                font-size: 12px;
+                font-weight: bold;
+            }
+
+            .verification-badge.verified {
+                background: rgba(76, 175, 80, 0.1);
+                color: #4CAF50;
+                border: 1px solid rgba(76, 175, 80, 0.2);
+            }
+
+            .verification-badge.unverified {
+                background: rgba(255, 152, 0, 0.1);
+                color: #FF9800;
+                border: 1px solid rgba(255, 152, 0, 0.2);
+            }
+        `;
+                    document.head.appendChild(styles);
+                }
+            }
+
+            // Helper function to verify if an ID matches the pre-generated one
+            async function verifyPreGeneratedId(username, date, providedId) {
+                try {
+                    const s3 = new AWS.S3();
+                    const response = await s3.getObject({
+                        Bucket: 'real-time-databucket',
+                        Key: `unique-ids/${username}/${date}.json`
+        }).promise();
+
+                    const record = JSON.parse(response.Body.toString());
+                    return record.uniqueId === providedId;
+                } catch (error) {
+                    console.error('Error verifying pre-generated ID:', error);
+                    return false;
+                }
+            }
+
+            // Keep existing copyToClipboard function
+            window.copyToClipboard = function(text) {
+                navigator.clipboard.writeText(text).then(() => {
+                    showCustomAlert('Unique ID copied to clipboard!');
+                }).catch(err => {
+                    console.error('Failed to copy:', err);
+                    showCustomAlert('Failed to copy ID');
+                });
+            };
+            // Initial table population
+            updateTable();
+
+            // Add event listeners
+            const searchInput = document.getElementById('exportSearchInput');
+            searchInput.addEventListener('input', (e) => updateTable(e.target.value));
+
+            // Add these after your existing event listeners
+            const startDate = document.getElementById('startDate');
+            const endDate = document.getElementById('endDate');
+
+            // Set default date range (last 30 days)
+            const today = new Date();
+            const thirtyDaysAgo = new Date(today);
+            thirtyDaysAgo.setDate(today.getDate() - 30);
+
+            startDate.value = thirtyDaysAgo.toISOString().split('T')[0];
+            endDate.value = today.toISOString().split('T')[0];
+
+            // Add event listeners for date inputs
+            startDate.addEventListener('change', () => updateTable(searchInput.value));
+            endDate.addEventListener('change', () => updateTable(searchInput.value));
+
+            // Add maximum date restriction
+            startDate.max = today.toISOString().split('T')[0];
+            endDate.max = today.toISOString().split('T')[0];
+
+            // Ensure end date is not before start date
+            startDate.addEventListener('change', () => {
+                if (endDate.value && startDate.value > endDate.value) {
+                    endDate.value = startDate.value;
+                }
+                endDate.min = startDate.value;
+            });
+
+            endDate.addEventListener('change', () => {
+                if (startDate.value && endDate.value < startDate.value) {
+                    startDate.value = endDate.value;
+                }
+                startDate.max = endDate.value;
+            });
+
+            // Add additional styles for unique ID
+            const additionalStyles = `
+            .unique-id {
+                cursor: pointer;
+                padding: 4px 8px;
+                background: rgba(108, 92, 231, 0.1);
+                border-radius: 4px;
+                transition: all 0.3s ease;
+            }
+
+            .unique-id:hover {
+                background: rgba(108, 92, 231, 0.2);
+            }
+
+            .unique-id::after {
+                content: '📋';
+                margin-left: 6px;
+                font-size: 12px;
+                opacity: 0.7;
+            }
+        `;
+            const styleSheet = document.createElement('style');
+            styleSheet.textContent = additionalStyles;
+            document.head.appendChild(styleSheet);
+
+            modal.querySelector('.close-btn').addEventListener('click', () => {
+                document.body.removeChild(modal);
+                document.head.removeChild(styleSheet);
+            });
+
+        } catch (error) {
+            console.error('Error showing export history:', error);
+            showCustomAlert('Failed to load export history');
+        }
+    }
+    /////////////////////////////////////////////////////
     async function searchProjectTime() {
         try {
             await injectAuthStyles();
@@ -3421,18 +4978,6 @@
         return Math.ceil((((this - onejan) / 86400000) + onejan.getDay() + 1) / 7);
     };
 
-    function escapeCSVField(field) {
-        if (field === null || field === undefined) {
-            return 'N/A';
-        }
-
-        const stringField = field.toString();
-        if (stringField.includes(',') || stringField.includes('"') || stringField.includes('\n')) {
-            return `"${stringField.replace(/"/g, '""')}"`;
-        }
-        return stringField;
-    }
-
     function splitAuxLabel(auxLabel) {
         if (!auxLabel || auxLabel.trim() === '') {
             return {
@@ -3467,12 +5012,6 @@
         }
 
         return '00:00:00';
-    }
-
-    function validateAreYouPL(value) {
-        const validValues = ['Yes', 'No', 'N/A'];
-        const cleanValue = value.replace(/^["']+|["']+$/g, '').trim();
-        return validValues.includes(cleanValue) ? cleanValue : 'N/A';
     }
 
     // Column definitions
@@ -3515,230 +5054,6 @@
         } catch (error) {
             console.log('Error loading MS_Sites data:', error);
             return {};
-        }
-    }
-
-    function parseCSVLine(line) {
-        const result = [];
-        let field = '';
-        let inQuotes = false;
-
-        for (let i = 0; i < line.length; i++) {
-            const char = line[i];
-
-            if (char === '"') {
-                if (inQuotes && line[i + 1] === '"') {
-                    field += '"';
-                    i++;
-                } else {
-                    inQuotes = !inQuotes;
-                }
-            } else if (char === ',' && !inQuotes) {
-                result.push(field.trim());
-                field = '';
-            } else {
-                field += char;
-            }
-        }
-
-        result.push(field.trim());
-        return result;
-    }
-
-    function transformAuxDataRow(row, siteMap) {
-        const fields = parseCSVLine(row);
-        if (fields.length !== AUX_DATA_COLUMNS.length) return null;
-
-        const rowData = {};
-        AUX_DATA_COLUMNS.forEach((col, index) => {
-            rowData[col] = fields[index];
-        });
-
-        const auxLabels = splitAuxLabel(rowData['AUX Label']);
-        const timeInMinutes = convertTimeToMinutes(rowData['Time Spent']);
-        const timeInHours = convertMinutesToHours(timeInMinutes);
-        const weekNo = new Date(rowData['Date']).getWeek();
-        const site = siteMap[rowData['Username']] || 'N/A';
-
-        return [
-            rowData['Date'],
-            weekNo,
-            rowData['Username'],
-            auxLabels['Aux L1'],
-            auxLabels['Aux L2'],
-            auxLabels['Aux L3'],
-            timeInMinutes,
-            timeInHours,
-            rowData['Project Title'],
-            rowData['Related Audits'],
-            validateAreYouPL(rowData['Are You the PL?']),
-            rowData['Comment'],
-            site
-        ].map(escapeCSVField).join(',');
-    }
-
-    async function getFullData() {
-        const currentUsername = localStorage.getItem("currentUsername");
-
-        try {
-            const isAuthorized = await checkAuthorization(currentUsername);
-            if (!isAuthorized) {
-                showCustomAlert("You don't have permission to download full data");
-                return;
-            }
-
-            await injectAuthStyles();
-            await loadAwsSdk();
-            await loadCognitoSDK();
-
-            // Add styles for selection modal (keep your existing styles here)
-
-            const selectionModal = document.createElement('div');
-            selectionModal.className = 'selection-modal';
-            selectionModal.innerHTML = `
-                                <div class="modal-content">
-                                    <h2 class="modal-title">Select Data Range</h2>
-                                    <button id="ytd-btn" class="selection-btn">Year to Date</button>
-                                    <button id="date-range-btn" class="selection-btn">Custom Date Range</button>
-                                    <button id="cancel-btn" class="selection-btn cancel">Cancel</button>
-                                </div>
-                            `;
-            document.body.appendChild(selectionModal);
-
-            let dateRange = await new Promise((resolve) => {
-                document.getElementById('ytd-btn').onclick = () => {
-                    const now = new Date();
-                    const startOfYear = new Date(now.getFullYear(), 0, 1);
-                    resolve({
-                        startDateTime: startOfYear.getTime(),
-                        endDateTime: now.getTime()
-                    });
-                    selectionModal.remove();
-                };
-
-                document.getElementById('date-range-btn').onclick = async () => {
-                    selectionModal.remove();
-                    try {
-                        const range = await selectDateRange();
-                        resolve(range);
-                    } catch (err) {
-                        resolve(null);
-                    }
-                };
-
-                document.getElementById('cancel-btn').onclick = () => {
-                    selectionModal.remove();
-                    resolve(null);
-                };
-            });
-
-            if (!dateRange) return;
-
-            const token = await AuthService.ensureAuthenticated();
-            // Configure AWS
-            AWS.config.update({
-                region: 'eu-north-1',
-                credentials: new AWS.CognitoIdentityCredentials({
-                    IdentityPoolId: 'eu-north-1:98c07095-e731-4219-bebe-db4dab892ea8',
-                    Logins: {
-                        'cognito-idp.eu-north-1.amazonaws.com/eu-north-1_V9kLPNVXl': token
-                    }
-                })
-            });
-
-            await new Promise((resolve, reject) => {
-                AWS.config.credentials.get(err => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-
-            const loadingIndicator = createLoadingIndicator();
-            document.body.appendChild(loadingIndicator);
-
-            try {
-                const s3 = new AWS.S3();
-                const bucketName = 'aux-data-bucket';
-                const prefixes = ['Aura_NPT_', 'aux_data_'];
-
-                let allData = [];
-                const siteMap = await loadMSSitesData();
-
-                // Add header only once at the start
-                allData.push(AURA_NPT_COLUMNS.join(','));
-
-                // Process files from both prefixes
-                for (const prefix of prefixes) {
-                    const listedObjects = await s3.listObjectsV2({
-                        Bucket: bucketName,
-                        Prefix: prefix
-                    }).promise();
-
-                    for (const item of listedObjects.Contents) {
-                        const fileData = await s3.getObject({
-                            Bucket: bucketName,
-                            Key: item.Key
-                        }).promise();
-
-                        const content = fileData.Body.toString('utf-8');
-                        const rows = content.split('\n');
-
-                        // Skip empty rows and header row (except first file)
-                        for (let i = 1; i < rows.length; i++) {
-                            if (!rows[i].trim()) continue;
-
-                            if (item.Key.startsWith('Aura_NPT_')) {
-                                const rowData = rows[i].split(',');
-                                const rowDate = new Date(rowData[0]).getTime();
-
-                                // Check if the row date falls within the selected range
-                                if (rowDate >= dateRange.startDateTime && rowDate <= dateRange.endDateTime) {
-                                    allData.push(rows[i]);
-                                }
-                            } else if (item.Key.startsWith('aux_data_')) {
-                                const transformedRow = transformAuxDataRow(rows[i], siteMap);
-                                if (transformedRow) {
-                                    const rowData = transformedRow.split(',');
-                                    const rowDate = new Date(rowData[0]).getTime();
-
-                                    // Check if the row date falls within the selected range
-                                    if (rowDate >= dateRange.startDateTime && rowDate <= dateRange.endDateTime) {
-                                        allData.push(transformedRow);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Filter data based on date range if needed
-                const startDate = new Date(dateRange.startDateTime).toISOString().split('T')[0];
-                const endDate = new Date(dateRange.endDateTime).toISOString().split('T')[0];
-
-                const blob = new Blob([allData.join('\n')], { type: 'text/csv' });
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = `full_npt_data_${startDate}_to_${endDate}.csv`;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                URL.revokeObjectURL(url);
-
-                showCustomAlert('Data successfully exported!');
-
-            } finally {
-                document.body.removeChild(loadingIndicator);
-            }
-
-        } catch (error) {
-            console.log('Error in getFullData:', error);
-            showCustomAlert('Failed to retrieve full data: ' + error.message);
-
-            const loadingIndicator = document.querySelector('.loading-indicator');
-            if (loadingIndicator && document.body.contains(loadingIndicator)) {
-                document.body.removeChild(loadingIndicator);
-            }
         }
     }
 
@@ -3800,6 +5115,200 @@
             }
         `;
     document.head.appendChild(styles);
+
+    async function getFullData() {
+        const currentUsername = localStorage.getItem("currentUsername");
+
+        try {
+            const isAuthorized = await checkAuthorization(currentUsername);
+            if (!isAuthorized) {
+                showCustomAlert("You don't have permission to download full data");
+                return;
+            }
+
+            await injectAuthStyles();
+            await loadAwsSdk();
+            await loadCognitoSDK();
+
+            const token = await AuthService.ensureAuthenticated();
+            await configureAWS(token);
+
+            AWS.config.update({
+                region: 'eu-north-1',
+                credentials: new AWS.CognitoIdentityCredentials({
+                    IdentityPoolId: 'eu-north-1:98c07095-e731-4219-bebe-db4dab892ea8',
+                    Logins: {
+                        'cognito-idp.eu-north-1.amazonaws.com/eu-north-1_V9kLPNVXl': token
+                    }
+                })
+            });
+
+            const loadingIndicator = createLoadingIndicator();
+            document.body.appendChild(loadingIndicator);
+
+            try {
+                const s3 = new AWS.S3();
+                const bucketName = 'aux-data-bucket';
+
+                // Get the collated file content
+                const collatedFileResponse = await s3.getObject({
+                    Bucket: bucketName,
+                    Key: 'Aura_NPT_Collated.csv'
+                }).promise();
+
+                // Remove any trailing newlines from collated content
+                let collatedContent = collatedFileResponse.Body.toString('utf-8').trim();
+
+                // Get aux_data_ files
+                const auxDataResponse = await s3.listObjectsV2({
+                    Bucket: bucketName,
+                    Prefix: 'aux_data_'
+                }).promise();
+
+                // Process aux_data_ files
+                let auxContent = [];
+                for (const item of auxDataResponse.Contents) {
+                    const fileData = await s3.getObject({
+                        Bucket: bucketName,
+                        Key: item.Key
+                    }).promise();
+
+                    const fileContent = fileData.Body.toString('utf-8');
+                    const lines = fileContent.split('\n');
+
+                    // Skip header row and filter out empty lines
+                    if (lines.length > 1) {
+                        const dataLines = lines.slice(1)
+                        .map(line => line.trim())
+                        .filter(line => line.length > 0);
+
+                        if (dataLines.length > 0) {
+                            auxContent.push(...dataLines);
+                        }
+                    }
+                }
+
+                // Combine contents with proper line breaks
+                const combinedContent = auxContent.length > 0 ?
+                      collatedContent + '\n' + auxContent.join('\n') :
+                collatedContent;
+
+                // Create and trigger download
+                const blob = new Blob([combinedContent], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+
+                // Format date for filename
+                const today = new Date();
+                const startDate = new Date(today.getFullYear(), 0, 1).toISOString().split('T')[0];
+                const endDate = today.toISOString().split('T')[0];
+                link.download = `full_npt_data_${startDate}_to_${endDate}.csv`;
+
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+
+                showCustomAlert('Data successfully exported!');
+
+            } finally {
+                document.body.removeChild(loadingIndicator);
+            }
+
+        } catch (error) {
+            console.error('Error in getFullData:', error);
+            showCustomAlert('Failed to retrieve full data: ' + error.message);
+
+            const loadingIndicator = document.querySelector('.loading-indicator');
+            if (loadingIndicator && document.body.contains(loadingIndicator)) {
+                document.body.removeChild(loadingIndicator);
+            }
+        }
+    }
+
+
+
+    // Helper function to parse CSV lines properly
+    function parseCSVLine(line) {
+        const result = [];
+        let field = '';
+        let inQuotes = false;
+
+        for (let i = 0; i < line.length; i++) {
+            const char = line[i];
+
+            if (char === '"') {
+                if (inQuotes && line[i + 1] === '"') {
+                    field += '"';
+                    i++;
+                } else {
+                    inQuotes = !inQuotes;
+                }
+            } else if (char === ',' && !inQuotes) {
+                result.push(field.trim());
+                field = '';
+            } else {
+                field += char;
+            }
+        }
+
+        result.push(field.trim());
+        return result;
+    }
+
+    // Helper function to escape CSV fields
+    function escapeCSVField(field) {
+        if (field === null || field === undefined) {
+            return '';
+        }
+        const stringField = String(field); // Convert to string explicitly
+        if (stringField.includes(',') || stringField.includes('"') || stringField.includes('\n')) {
+            return `"${stringField.replace(/"/g, '""')}"`;
+        }
+        return stringField;
+    }
+
+    // Helper function to transform aux data rows
+    function transformAuxDataRow(row, siteMap) {
+        const fields = parseCSVLine(row);
+        if (fields.length !== AUX_DATA_COLUMNS.length) return null;
+
+        try {
+            const rowData = {};
+            AUX_DATA_COLUMNS.forEach((col, index) => {
+                rowData[col] = fields[index];
+            });
+
+            const auxLabels = splitAuxLabel(rowData['AUX Label']);
+            const timeInMinutes = convertTimeToMinutes(rowData['Time Spent']);
+            const timeInHours = convertMinutesToHours(timeInMinutes);
+            const weekNo = new Date(rowData['Date']).getWeek();
+            const site = siteMap[rowData['Username']] || 'N/A';
+
+            const transformedFields = [
+                rowData['Date'],
+                weekNo,
+                rowData['Username'],
+                auxLabels['Aux L1'],
+                auxLabels['Aux L2'],
+                auxLabels['Aux L3'],
+                timeInMinutes,
+                timeInHours,
+                rowData['Project Title'],
+                rowData['Related Audits'],
+                validateAreYouPL(rowData['Are You the PL?']),
+                rowData['Comment'],
+                site
+            ];
+
+            return transformedFields.map(field => escapeCSVField(field)).join(',');
+
+        } catch (error) {
+            console.error('Error transforming row:', error, row);
+            return null;
+        }
+    }
     ///////////////////////////////////////////////////////////////
     //CL Data Manager
     async function checkCLManagerAuthorization(username) {
@@ -3978,20 +5487,40 @@
         const modal = document.createElement('div');
         modal.className = 'project-time-modal';
         modal.innerHTML = `
-<div class="modal-content">
-    <h2>Get Project Time</h2>
-    <div class="input-container">
-        <input type="text"
-               id="projectNumberInput"
-               placeholder="Enter Project Number"
-               class="project-input">
-        <button id="searchProjectBtn" class="search-btn">
-            <span class="search-icon">🔍</span>
-            <span class="btn-text">Search</span>
-        </button>
+<div class="project-time-modal">
+    <div class="modal-content">
+        <header class="modal-header">
+            <h2>Project Time Search</h2>
+            <button class="close-btn" aria-label="Close">
+                <svg width="24" height="24" viewBox="0 0 24 24">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                </svg>
+            </button>
+        </header>
+
+        <div class="search-section">
+            <div class="input-container">
+                <div class="input-wrapper">
+                    <input type="text"
+                           id="projectNumberInput"
+                           placeholder="Enter Project Number"
+                           class="project-input"
+                           autocomplete="off">
+                    <span class="input-focus-border"></span>
+                </div>
+    <button id="searchProjectBtn" class="search-btn">
+        <svg class="search-icon" viewBox="0 0 24 24">
+            <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+        </svg>
+        <span>Search</span>
+    </button>
+            </div>
+        </div>
+
+        <div id="projectTimeResults" class="results-container">
+            <!-- Results will be populated here -->
+        </div>
     </div>
-    <div id="projectTimeResults" class="results-container"></div>
-    <button class="close-btn" aria-label="Close">×</button>
 </div>
     `;
 
@@ -3999,18 +5528,19 @@
         const styles = document.createElement('style');
         styles.textContent = `
 :root {
-    --bg-primary: #121212;
-    --bg-secondary: #1e1e1e;
+    --bg-primary: #1a1b1e;
+    --bg-secondary: #2c2c2c;
+    --bg-input: #1e1e1e;
     --text-primary: #ffffff;
-    --text-secondary: #b3b3b3;
+    --text-secondary: #e0e0e0;
     --accent-primary: #2196f3;
-    --accent-secondary: #64b5f6;
-    --border-color: #333333;
-    --hover-color: #282828;
+    --accent-hover: #42a5f5;
+    --border-color: #404040;
+    --hover-color: #363636;
     --success-color: #4caf50;
     --error-color: #f44336;
+    --modal-backdrop: rgba(0, 0, 0, 0.8);
 }
-
 
 .project-time-modal {
     position: fixed;
@@ -4018,153 +5548,141 @@
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(30, 30, 46, 0.9);
+    background: var(--modal-backdrop);
+    backdrop-filter: blur(5px);
     display: flex;
     justify-content: center;
     align-items: center;
     z-index: 10002;
+    animation: fadeIn 0.3s ease-out;
 }
 
-.project-time-modal .modal-content {
+.modal-content {
     background: var(--bg-primary);
-    padding: 30px;
-    border-radius: 16px;
+    padding: 2rem;
+    border-radius: 12px;
     width: 95%;
     max-width: 1200px;
     max-height: 90vh;
     position: relative;
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
     display: flex;
     flex-direction: column;
+    gap: 1.5rem;
     border: 1px solid var(--border-color);
+    animation: slideUp 0.3s ease-out;
 }
 
-.project-time-modal h2 {
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+}
+
+.modal-header h2 {
     color: var(--text-primary);
-    font-size: 28px;
-    margin-bottom: 24px;
-    text-align: center;
+    font-size: 1.75rem;
     font-weight: 600;
+    margin: 0;
 }
 
 .input-container {
     display: flex;
-    gap: 12px;
-    margin-bottom: 24px;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    position: relative;
+}
+
+.input-wrapper {
+    flex: 1;
+    position: relative;
+}
+
+.input-wrapper::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border-radius: 8px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0) 100%);
+    pointer-events: none;
 }
 
 .project-input {
-    flex: 1;
-    padding: 12px 16px;
-    border: 1px solid var(--border-color);
+    width: 100%;
+    padding: 0.875rem 1rem;
+    font-size: 1rem;
+    background-color: var(--bg-input) !important;
+    border: 2px solid var(--border-color);
     border-radius: 8px;
-    background-color: var(--bg-secondary) !important;
     color: var(--text-primary) !important;
-    font-size: 16px;
-    caret-color: var(--accent-primary);
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .project-input::placeholder {
-    color: var(--text-secondary);
+    color: #666666;
+    opacity: 1;
 }
 
 .project-input:hover {
-    border-color: var(--accent-secondary);
+    border-color: var(--accent-primary);
+    background-color: #242424 !important;
 }
 
 .project-input:focus {
-    border-color: var(--accent-primary);
-    box-shadow: 0 0 0 2px rgba(137, 180, 250, 0.2);
     outline: none;
+    border-color: var(--accent-primary);
+    background-color: #242424 !important;
+    box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.2);
+    animation: focusRing 0.6s ease-out;
 }
 
 .search-btn {
-    padding: 12px 24px;
-    border: none;
-    border-radius: 8px;
-    background: var(--accent-primary);
-    color: var(--bg-primary);
-    font-size: 16px;
-    font-weight: 600;
-    cursor: pointer;
     display: flex;
     align-items: center;
-    gap: 8px;
-    transition: all 0.3s ease;
+    gap: 0.5rem;
+    padding: 0.875rem 1.5rem;
+    background: var(--accent-primary);
+    border: none;
+    border-radius: 8px;
+    color: white;
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 120px;
+    justify-content: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .search-btn:hover {
-    background: var(--accent-secondary);
-    transform: translateY(-2px);
+    background: var(--accent-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.search-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .search-icon {
-    font-size: 18px;
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
 }
 
 .results-container {
     background: var(--bg-secondary);
-    border-radius: 12px;
-    padding: 24px;
-    margin-top: 24px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    overflow-x: auto;
-    flex-grow: 1;
-    display: flex;
-    flex-direction: column;
+    border-radius: 8px;
+    padding: 1.5rem;
+    overflow: auto;
+    flex: 1;
     min-height: 300px;
-}
-
-.loading-container {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    padding: 24px;
-    color: var(--accent-primary);
-}
-
-.loading-spinner {
-    display: inline-block;
-    width: 36px;
-    height: 36px;
-    border: 3px solid rgba(137, 180, 250, 0.2);
-    border-radius: 50%;
-    border-top-color: var(--accent-primary);
-    animation: spin 1s ease-in-out infinite;
-    margin-right: 12px;
-}
-
-@keyframes spin {
-    to { transform: rotate(360deg); }
-}
-
-.loading-text {
-    color: var(--accent-primary);
-    font-size: 18px;
-}
-
-.close-btn {
-    position: absolute;
-    top: 20px;
-    right: 20px;
-    background: var(--bg-secondary);
-    border: none;
-    color: var(--text-secondary);
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    font-size: 24px;
-    transition: all 0.3s ease;
-}
-
-.close-btn:hover {
-    background: var(--hover-color);
-    color: var(--text-primary);
 }
 
 .results-table {
@@ -4172,113 +5690,188 @@
     border-collapse: separate;
     border-spacing: 0;
     color: var(--text-primary);
-    font-size: 14px;
-}
-
-.results-table thead {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    background: var(--bg-secondary);
 }
 
 .results-table th {
-    background: var(--bg-secondary);
-    padding: 16px;
+    background: var(--bg-primary);
+    padding: 1rem;
     text-align: left;
     font-weight: 600;
     color: var(--accent-primary);
-    border-bottom: 2px solid var(--accent-secondary);
-    white-space: nowrap;
+    border-bottom: 2px solid var(--border-color);
 }
 
 .results-table td {
-    padding: 14px 16px;
+    padding: 0.875rem 1rem;
     border-bottom: 1px solid var(--border-color);
-}
-
-.results-table tbody tr {
-    transition: background-color 0.2s ease;
-}
-
-.results-table tbody tr:hover {
-    background-color: var(--hover-color);
-}
-
-.results-table tbody tr:nth-child(even) {
-    background-color: rgba(42, 43, 61, 0.5);
-}
-
-.results-table tbody tr:nth-child(even):hover {
-    background-color: var(--hover-color);
-}
-
-.results-table td:nth-child(1) {
-    font-weight: 600;
-    color: var(--accent-secondary);
-}
-
-.results-table td:nth-child(4),
-.results-table td:nth-child(5) {
-    text-align: right;
-    font-family: monospace;
-    color: var(--success-color);
-}
-
-.no-results {
-    text-align: center;
-    padding: 30px;
     color: var(--text-secondary);
-    font-size: 16px;
-    background: rgba(243, 139, 168, 0.1);
-    border-radius: 8px;
-    border: 1px solid rgba(243, 139, 168, 0.2);
-    margin: 20px 0;
+}
+
+.results-table tr:hover {
+    background-color: var(--hover-color);
+}
+
+.loading-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 2rem;
+    color: var(--accent-primary);
+}
+
+.loading-spinner {
+    border: 3px solid rgba(33, 150, 243, 0.2);
+    border-top-color: var(--accent-primary);
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    animation: spin 1s linear infinite;
+    margin-right: 1rem;
 }
 
 .error-message {
-    background-color: rgba(243, 139, 168, 0.2);
+    background-color: rgba(244, 67, 54, 0.1);
     color: var(--error-color);
-    padding: 16px;
+    padding: 1rem;
     border-radius: 8px;
-    margin-top: 24px;
-    text-align: center;
     border: 1px solid var(--error-color);
+    margin-top: 1rem;
 }
 
-@media screen and (max-width: 1024px) {
-    .project-time-modal .modal-content {
-        width: 98%;
-        max-width: none;
-        margin: 10px;
+.no-results {
+    color: var(--text-secondary);
+    text-align: center;
+    padding: 2rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+}
+
+.close-btn {
+    position: absolute;
+    top: 1.5rem;
+    right: 1.5rem;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.close-btn:hover {
+    background: var(--hover-color);
+    color: var(--text-primary);
+}
+
+.close-btn svg {
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
+}
+
+/* Autofill Styles */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+    -webkit-box-shadow: 0 0 0 30px var(--bg-input) inset !important;
+    -webkit-text-fill-color: var(--text-primary) !important;
+    caret-color: var(--text-primary) !important;
+}
+
+/* Scrollbar Styles */
+.results-container::-webkit-scrollbar {
+    width: 8px;
+}
+
+.results-container::-webkit-scrollbar-track {
+    background: var(--bg-input);
+    border-radius: 4px;
+}
+
+.results-container::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+.results-container::-webkit-scrollbar-thumb:hover {
+    background: var(--accent-primary);
+}
+
+/* Animations */
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes focusRing {
+    0% {
+        box-shadow: 0 0 0 0 rgba(33, 150, 243, 0.4);
+    }
+    100% {
+        box-shadow: 0 0 0 4px rgba(33, 150, 243, 0);
+    }
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .modal-content {
+        padding: 1.5rem;
+        margin: 1rem;
+    }
+
+    .input-container {
+        flex-direction: column;
+    }
+
+    .search-btn {
+        width: 100%;
     }
 
     .results-table {
-        font-size: 13px;
+        font-size: 0.875rem;
     }
 
     .results-table th,
     .results-table td {
-        padding: 12px 14px;
+        padding: 0.75rem;
     }
 }
 
-@media screen and (max-width: 768px) {
-    .results-table {
-        font-size: 12px;
+@media (max-width: 480px) {
+    .modal-content {
+        padding: 1rem;
     }
 
-    .results-table th,
-    .results-table td {
-        padding: 10px 12px;
+    .modal-header h2 {
+        font-size: 1.25rem;
     }
 
-    .project-time-modal .modal-content {
-        padding: 20px;
+    .project-input,
+    .search-btn {
+        padding: 0.75rem 1rem;
     }
 }
-
-
     `;
         document.head.appendChild(styles);
         document.body.appendChild(modal);
@@ -4287,6 +5880,18 @@
         const searchBtn = modal.querySelector('#searchProjectBtn');
         const projectInput = modal.querySelector('#projectNumberInput');
         const resultsContainer = modal.querySelector('#projectTimeResults');
+
+        // Focus the input after modal opens
+        setTimeout(() => {
+            modal.querySelector('#projectNumberInput').focus();
+        }, 100);
+
+        // Close modal on background click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.remove();
+            }
+        });
 
         searchBtn.addEventListener('click', () => {
             const projectNumber = projectInput.value.trim();
@@ -4311,19 +5916,16 @@
 
     async function searchCohortProjectTime(projectNumber, resultsContainer) {
         try {
-
             await injectAuthStyles();
             await loadAwsSdk();
             await loadCognitoSdk();
 
             // Show loading state
             resultsContainer.innerHTML = `
-<div class="loading-container">
-    <div class="loading-spinner"></div>
-    <span class="loading-text">Searching project time data...</span>
-</div>
-
-        `;
+            <div class="loading-container">
+                <div class="loading-spinner"></div>
+                <span class="loading-text">Searching project time data...</span>
+            </div>`;
 
             const token = await AuthService.ensureAuthenticated();
             await configureAWS(token);
@@ -4342,7 +5944,8 @@
 
             const s3 = new AWS.S3();
             const bucketName = 'aux-data-bucket';
-            const projectData = new Map();
+            const projectDataMap = new Map();
+            const normalizedSearchNumber = normalizeProjectNumber(projectNumber);
 
             const nonConductLabels = [
                 'Defect Tracker Creation',
@@ -4382,64 +5985,74 @@
 
                         if (prefix === 'Aura_NPT_') {
                             // Process Aura_NPT_ file
-                            if (columns.length >= 9 && columns[8].includes(projectNumber)) {
-                                const date = columns[0];
-                                const username = columns[2];
-                                const auxLabel3 = columns[5];
-                                const timeMinutes = parseFloat(columns[6]); // Time (minutes)
+                            if (columns.length >= 9) {
+                                const projectTitle = columns[8];
+                                const normalizedProjectTitle = normalizeProjectNumber(projectTitle);
 
-                                const key = `${date}-${username}`;
-                                if (!projectData.has(key)) {
-                                    projectData.set(key, {
-                                        date,
-                                        username,
-                                        conductTime: 0,
-                                        nonConductTime: 0
-                                    });
-                                }
+                                if (normalizedProjectTitle === normalizedSearchNumber) {
+                                    const date = columns[0];
+                                    const username = columns[2];
+                                    const auxLabel3 = columns[5];
+                                    const timeMinutes = parseFloat(columns[6]);
 
-                                const entry = projectData.get(key);
-                                const timeHours = timeMinutes / 60; // Convert minutes to hours
+                                    const key = `${projectTitle}-${date}-${username}`;
+                                    if (!projectDataMap.has(key)) {
+                                        projectDataMap.set(key, {
+                                            date,
+                                            username,
+                                            projectTitle,
+                                            conductTime: 0,
+                                            nonConductTime: 0
+                                        });
+                                    }
 
-                                // Checkeck if it's Conduct Project or Non Conduct
-                                if (auxLabel3.trim() === 'Conduct Project') {
-                                    entry.conductTime += timeHours;
-                                } else if (auxLabel3.trim() === 'Non Conduct Project' ||
-                                           nonConductLabels.some(label => auxLabel3.trim() === label)) {
-                                    entry.nonConductTime += timeHours;
+                                    const entry = projectDataMap.get(key);
+                                    const timeHours = timeMinutes / 60;
+
+                                    if (auxLabel3.trim() === 'Conduct Project') {
+                                        entry.conductTime += timeHours;
+                                    } else if (auxLabel3.trim() === 'Non Conduct Project' ||
+                                               nonConductLabels.some(label => auxLabel3.trim() === label)) {
+                                        entry.nonConductTime += timeHours;
+                                    }
                                 }
                             }
                         } else {
                             // Process aux_data_ file
-                            if (columns.length >= 5 && columns[4].includes(projectNumber)) {
-                                const date = columns[0];
-                                const username = columns[1];
-                                const auxLabel = columns[2];
-                                const timeSpent = columns[3];
+                            if (columns.length >= 5) {
+                                const projectTitle = columns[4];
+                                const normalizedProjectTitle = normalizeProjectNumber(projectTitle);
 
-                                const key = `${date}-${username}`;
-                                if (!projectData.has(key)) {
-                                    projectData.set(key, {
-                                        date,
-                                        username,
-                                        conductTime: 0,
-                                        nonConductTime: 0
-                                    });
-                                }
+                                if (normalizedProjectTitle === normalizedSearchNumber) {
+                                    const date = columns[0];
+                                    const username = columns[1];
+                                    const auxLabel = columns[2];
+                                    const timeSpent = columns[3];
 
-                                const entry = projectData.get(key);
+                                    const key = `${projectTitle}-${date}-${username}`;
+                                    if (!projectDataMap.has(key)) {
+                                        projectDataMap.set(key, {
+                                            date,
+                                            username,
+                                            projectTitle,
+                                            conductTime: 0,
+                                            nonConductTime: 0
+                                        });
+                                    }
 
-                                // Convert HH:MM:SS to hours
-                                let timeHours = 0;
-                                if (timeSpent.includes(':')) {
-                                    const [hours, minutes, seconds] = timeSpent.split(':').map(Number);
-                                    timeHours = hours + (minutes / 60) + (seconds / 3600);
-                                }
+                                    const entry = projectDataMap.get(key);
 
-                                if (auxLabel.includes('Conduct Project')) {
-                                    entry.conductTime += timeHours;
-                                } else if (nonConductLabels.some(label => auxLabel.includes(label))) {
-                                    entry.nonConductTime += timeHours;
+                                    let timeHours = 0;
+                                    if (timeSpent.includes(':')) {
+                                        const [hours, minutes, seconds] = timeSpent.split(':').map(Number);
+                                        timeHours = hours + (minutes / 60) + (seconds / 3600);
+                                    }
+
+                                    if (auxLabel.includes('Conduct Project')) {
+                                        entry.conductTime += timeHours;
+                                    } else if (nonConductLabels.some(label => auxLabel.includes(label))) {
+                                        entry.nonConductTime += timeHours;
+                                    }
                                 }
                             }
                         }
@@ -4447,10 +6060,9 @@
                 }
             }
 
-            // Sort data by date
-            const sortedData = Array.from(projectData.values()).sort((a, b) =>
-                                                                     new Date(a.date) - new Date(b.date)
-                                                                    );
+            // Convert Map to array and sort by date
+            const sortedData = Array.from(projectDataMap.values())
+            .sort((a, b) => new Date(a.date) - new Date(b.date));
 
             // Display results
             if (sortedData.length > 0) {
@@ -4468,7 +6080,7 @@
                     <tbody>
                         ${sortedData.map(entry => `
                             <tr>
-                                <td>${projectNumber}</td>
+                                <td>${entry.projectTitle}</td>
                                 <td>${entry.date}</td>
                                 <td>${entry.username}</td>
                                 <td>${entry.nonConductTime.toFixed(2)}</td>
@@ -4487,15 +6099,14 @@
             }
 
         } catch (error) {
-            console.log ('Error searching project time:', error);
+            console.error('Error searching project time:', error);
             resultsContainer.innerHTML = `
-            <div class="no-results">
+            <div class="error-message">
                 Error searching project time: ${error.message}
             </div>
         `;
         }
     }
-
 
     function showCohortSelection() {
         const modal = document.createElement('div');
@@ -4518,18 +6129,18 @@
         // Add styles
         const styles = document.createElement('style');
         styles.textContent = `
-:root {
-    --bg-primary: #121212;
-    --bg-secondary: #1e1e1e;
-    --text-primary: #ffffff;
-    --text-secondary: #a0a0a0;
-    --accent-primary: #3d9bff;
-    --accent-secondary: #007fff;
-    --border-color: #2a2a2a;
-    --hover-color: #252525;
-    --success-color: #4caf50;
-    --error-color: #ff4444;
-}
+        :root {
+            --bg-primary: #121212;
+            --bg-secondary: #1e1e1e;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0a0;
+            --accent-primary: #3d9bff;
+            --accent-secondary: #007fff;
+            --border-color: #2a2a2a;
+            --hover-color: #252525;
+            --success-color: #4caf50;
+            --error-color: #ff4444;
+        }
 
         .cohort-selection-modal {
             position: fixed;
@@ -4716,22 +6327,33 @@
             const loadingIndicator = createLoadingIndicator();
             document.body.appendChild(loadingIndicator);
 
+            // First, ensure AWS SDK is loaded
+            await loadAwsSdk();
+            await loadCognitoSdk();
+
             // Get authentication token
             const token = await AuthService.ensureAuthenticated();
-            await configureAWS(token);
             if (!token) {
                 throw new Error('Authentication failed');
             }
 
-            // Configure AWS
-            AWS.config.update({
-                region: 'eu-north-1',
-                credentials: new AWS.CognitoIdentityCredentials({
+            // Configure AWS with the correct credentials
+            await new Promise((resolve, reject) => {
+                AWS.config.region = 'eu-north-1';
+                AWS.config.credentials = new AWS.CognitoIdentityCredentials({
                     IdentityPoolId: 'eu-north-1:98c07095-e731-4219-bebe-db4dab892ea8',
                     Logins: {
                         'cognito-idp.eu-north-1.amazonaws.com/eu-north-1_V9kLPNVXl': token
                     }
-                })
+                });
+
+                AWS.config.credentials.get((err) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        resolve();
+                    }
+                });
             });
 
             // Create dashboard container
@@ -4857,7 +6479,7 @@
             .search-input {
                 padding: 8px;
                 border-radius: 5px;
-                background: rgba(255, 255, 255, 0.1);
+                background: black;
                 color: white;
                 border: 1px solid rgba(255, 255, 255, 0.2);
                 min-width: 120px;
@@ -4865,11 +6487,13 @@
 
             .search-filters {
                 display: flex;
+                color: black;
                 gap: 10px;
             }
 
             .search-input {
                 width: 200px;
+                color: black;
             }
 
             .project-type-filter {
@@ -5054,12 +6678,13 @@
                                 const timeMinutes = parseFloat(columns[6]); // Time (minutes)
                                 const projectTitle = columns[8];
 
-                                const key = `${projectTitle}-${date}-${username}`;
+                                const key = `${normalizeProjectNumber(projectTitle)}-${date}-${username}`;
                                 if (!projectDataMap.has(key)) {
                                     projectDataMap.set(key, {
                                         date,
                                         username,
-                                        projectTitle,
+                                        projectTitle, // Keep original format for display
+                                        normalizedProjectNumber: normalizeProjectNumber(projectTitle),
                                         conductTime: 0,
                                         nonConductTime: 0
                                     });
@@ -5088,12 +6713,13 @@
                                 const timeSpent = columns[3];
                                 const projectTitle = columns[4];
 
-                                const key = `${projectTitle}-${date}-${username}`;
+                                const key = `${normalizeProjectNumber(projectTitle)}-${date}-${username}`;
                                 if (!projectDataMap.has(key)) {
                                     projectDataMap.set(key, {
                                         date,
                                         username,
-                                        projectTitle,
+                                        projectTitle, // Keep original format for display
+                                        normalizedProjectNumber: normalizeProjectNumber(projectTitle),
                                         conductTime: 0,
                                         nonConductTime: 0
                                     });
@@ -5273,25 +6899,28 @@
         </div>
     `;
 
-        // Group projects by project title
+        // Group projects by normalized project number
         const projectGroups = new Map();
         projectData.forEach(entry => {
-            if (!projectGroups.has(entry.projectTitle)) {
-                projectGroups.set(entry.projectTitle, {
+            const normalizedNumber = normalizeProjectNumber(entry.projectTitle);
+            if (!projectGroups.has(normalizedNumber)) {
+                projectGroups.set(normalizedNumber, {
                     conductTime: 0,
                     nonConductTime: 0,
                     users: new Set(),
-                    dates: new Set()
+                    dates: new Set(),
+                    formats: new Set([entry.projectTitle]) // Track different formats
                 });
             }
-            const group = projectGroups.get(entry.projectTitle);
+            const group = projectGroups.get(normalizedNumber);
             group.conductTime += entry.conductTime;
             group.nonConductTime += entry.nonConductTime;
             group.users.add(entry.username);
             group.dates.add(entry.date);
+            group.formats.add(entry.projectTitle);
         });
 
-        // Generate project cards
+        // Generate project cards with all formats
         projectsGrid.innerHTML = generateProjectCards(projectGroups);
 
         // Add click handlers for project cards
@@ -5478,7 +7107,12 @@
             const yearMatch = yearFilter === 'all' || date.getFullYear().toString() === yearFilter;
             const monthMatch = monthFilter === 'all' || (date.getMonth() + 1).toString() === monthFilter;
             const weekMatch = weekFilter === 'all' || getWeekNumber(date).toString() === weekFilter;
-            const projectMatch = item.projectTitle.toLowerCase().includes(projectFilter);
+
+            // Normalize both the search term and the project number for comparison
+            const searchTerm = normalizeProjectNumber(projectFilter.toLowerCase());
+            const itemProjectNumber = normalizeProjectNumber(item.projectTitle.toLowerCase());
+            const projectMatch = itemProjectNumber.includes(searchTerm);
+
             const usernameMatch = item.username.toLowerCase().includes(usernameFilter);
             const typeMatch = projectType === 'all' ||
                   (projectType === 'microsite' && item.projectTitle.startsWith('Microsite-')) ||
@@ -5555,6 +7189,12 @@
         return cohortMap[cohortNumber] || [];
     }
 
+    //5. normalizeProjectNumber
+    function normalizeProjectNumber(projectTitle) {
+        if (!projectTitle) return '';
+        const match = projectTitle.match(/(?:WF-)?(\d+)/);
+        return match ? match[1] : projectTitle;
+    }
 
     // 6. Filter project data based on selected filters
     function filterProjectData(projectData, dashboard) {
@@ -6135,7 +7775,7 @@
          style="width: 30px; height: 30px; cursor: pointer; margin: 5px 2px;">
 
     <img id="importFromAws"
-         src="https://raw.githubusercontent.com/Mofi-l/static-images/main/attachment.png"
+         src="https://raw.githubusercontent.com/Mofi-l/static-images/main/cloud-download-alt.png"
          alt="Import from AWS"
          title="Import from AWS"
          style="width: 30px; height: 30px; cursor: pointer; margin: 5px 2px;">
@@ -6144,6 +7784,12 @@
          src="https://raw.githubusercontent.com/Mofi-l/static-images/main/table.png"
          alt="Display AUX Data"
          title="Display AUX Data"
+         style="width: 30px; height: 30px; cursor: pointer; margin: 5px 2px;">
+
+    <img id="viewExportHistoryButton"
+         src="https://raw.githubusercontent.com/Mofi-l/static-images/main/history.png"
+         alt="View Export History"
+         title="View Export History"
          style="width: 30px; height: 30px; cursor: pointer; margin: 5px 2px;">
 
     <img id="clearLocalStorageButton"
@@ -6258,9 +7904,19 @@
     document.getElementById('exportToCSVButton').addEventListener('click', exportToCSV);
     document.getElementById('getFullDataButton').addEventListener('click', getFullData);
     document.getElementById('searchProjectTimeButton').addEventListener('click', searchProjectTime);
+    document.getElementById('viewExportHistoryButton').addEventListener('click', showExportHistory);
+
     document.getElementById('restoreCSVButton').addEventListener('click', function() {
-        document.getElementById('csvFileInput').click();
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.csv';
+        input.style.display = 'none';
+        input.addEventListener('change', restoreFromCSV);
+        document.body.appendChild(input);
+        input.click();
+        document.body.removeChild(input);
     });
+
     document.getElementById('exportToAWSButton').addEventListener('click', exportToAWS);
     document.getElementById('displayAuxDataButton').addEventListener('click', function() {
         const popupContainer = document.getElementById('auxTablePopup');
@@ -6593,6 +8249,17 @@
         const isMicrositeWork = auxLabel.startsWith('Microsite Project Work');
 
         // Check if previous AUX was strictly "Conduct Project"
+        // Check if previous entry exists and get its L2 and L3
+        const previousL2L3 = previousEntry && previousEntry.auxLabel ?
+              previousEntry.auxLabel.split(' - ').slice(1) : [];
+
+        const wasPreviousDpmOrDocReview = previousL2L3[0] === 'DPM Request' ||
+              previousL2L3[0] === 'Document Review';
+
+        const wasPreviousL3ConductProject = previousL2L3[1] === 'Conduct Project';
+
+        // Check two conditions:
+        // 1. Was previous AUX strictly "Conduct Project" (existing logic)
         const wasPreviousConductProject = previousEntry &&
               previousEntry.auxLabel &&
               previousEntry.auxLabel.split(' - ').some(part =>
@@ -6600,14 +8267,92 @@
                                                        !part.trim().includes('Non Conduct Project')
                                                       );
 
+        // 2. Was previous combination DPM/Document Review with Conduct Project
+        const wasPreviousDpmDocReviewConductProject = wasPreviousDpmOrDocReview &&
+              wasPreviousL3ConductProject;
+
+        // Combined logic: Enable audit count if previous was Conduct Project
+        // BUT disable if previous was DPM/Document Review with Conduct Project
+        const enableAuditCount = wasPreviousConductProject &&
+              !wasPreviousDpmDocReviewConductProject;
+
         const currentLabel = auxLabel.toLowerCase();
 
-        // Enable audit count for ANY new AUX if previous was Conduct Project
-        const enableAuditCount = wasPreviousConductProject;
+        // Create HTML only for relevant fields
+        let fieldsHTML = '';
+
+        // Show project title field only for Microsite Project Work
+        if (isMicrositeWork) {
+            fieldsHTML += `
+            <div class="input-field">
+                <label for="projectTitle">Project Title *</label>
+                <input type="text" id="projectTitle" placeholder="Enter project title" required>
+            </div>
+        `;
+        }
+
+        // Show 'Are you PL?' only for Microsite Project Work
+        if (isMicrositeWork) {
+            fieldsHTML += `
+            <div class="radio-group">
+                <label class="radio-label">Are you the PL? *</label>
+                <div class="radio-options">
+                    <label class="radio-option">
+                        <input type="radio" name="areYouPL" value="Yes" required>
+                        <span class="radio-label">Yes</span>
+                    </label>
+                    <label class="radio-option">
+                        <input type="radio" name="areYouPL" value="No" required>
+                        <span class="radio-label">No</span>
+                    </label>
+                    <label class="radio-option">
+                        <input type="radio" name="areYouPL" value="N/A" required>
+                        <span class="radio-label">N/A</span>
+                    </label>
+                </div>
+            </div>
+        `;
+        }
+
+        // Always show comment field
+        fieldsHTML += `
+        <div class="input-field">
+            <label for="comment-text">Comment</label>
+            <textarea id="comment-text" rows="4" placeholder="Enter your comment here..." required></textarea>
+        </div>
+    `;
+
+        // Show audit counts field only after Conduct Project
+        if (wasPreviousConductProject) {
+            fieldsHTML += `
+            <div class="input-field">
+                <label for="relatedAudits">Audit Counts *</label>
+                <input type="number" id="relatedAudits" placeholder="Enter number of audits" required>
+            </div>
+        `;
+        }
+
+        // Create and add popup to document
+        const popup = document.createElement('div');
+        popup.id = 'combined-popup';
+        popup.innerHTML = `
+        <div class="popup-content">
+            <h2>Enter Data</h2>
+            <div class="input-container">
+                ${fieldsHTML}
+            </div>
+            <div class="button-group">
+                <button type="button" id="submit-btn" class="popup-button">Submit</button>
+                <button type="button" id="cancel-btn" class="popup-button">Cancel</button>
+            </div>
+        </div>
+    `;
+
+        document.body.appendChild(popup);
 
         const styles = document.createElement('style');
         styles.textContent = `
-                #combined-popup {
+            #combined-popup {
             position: fixed;
             top: 50%;
             left: 50%;
@@ -6845,171 +8590,143 @@
 
         document.head.appendChild(styles);
 
-        const popup = document.createElement('div');
-        popup.id = 'combined-popup';
-        popup.innerHTML = `
-        <div class="popup-content">
-            <h2>Enter Data</h2>
+        // Get all required elements
+        const submitBtn = document.getElementById('submit-btn');
+        const cancelBtn = document.getElementById('cancel-btn');
+        const commentInput = document.getElementById('comment-text');
+        const projectTitleInput = document.getElementById('projectTitle');
+        const relatedAuditsInput = document.getElementById('relatedAudits');
 
-            <div class="input-container">
-                <div class="input-field">
-                    <label for="projectTitle">Project Title ${isMicrositeWork ? '*' : ''}</label>
-                    <input
-                        type="text"
-                        id="projectTitle"
-                        name="projectTitle"
-                        placeholder="${isMicrositeWork ? 'Enter project title' : 'Project title not required'}"
-                        autocomplete="off"
-                        ${!isMicrositeWork ? 'disabled' : ''}
-                        ${isMicrositeWork ? 'required' : ''}
-                    >
-                    ${!isMicrositeWork ?
-            '<small style="color: #666; display: block; margin-top: 5px;">Project title is only required for Microsite Project Work</small>'
-        : ''}
-                </div>
+        // Validation function
+        function validateForm() {
+            const comment = commentInput.value.trim();
+            if (!comment) return false;
 
-                <div class="input-field">
-                    <label for="relatedAudits">Audit Counts ${enableAuditCount ? '*' : ''}</label>
-                    <input
-                        type="number"
-                        id="relatedAudits"
-                        name="relatedAudits"
-                        placeholder="${enableAuditCount ? 'Enter number of audits' : 'Audit count not required'}"
-                        min="0"
-                        ${enableAuditCount ? 'required' : ''}
-                        ${!enableAuditCount ? 'disabled' : ''}
-                        ${!enableAuditCount ? 'style="background-color: #f5f5f5;"' : ''}
-                        onkeypress="return (event.charCode >= 48 && event.charCode <= 57)"
-                        oninput="this.value = this.value.replace(/[^0-9]/g, '')"
-                    >
-                    ${!enableAuditCount ?
-            '<small style="color: #666; display: block; margin-top: 5px;">Audit count is only required after "Conduct Project"</small>'
-        : ''}
-                </div>
+            if (isMicrositeWork) {
+                const projectTitle = projectTitleInput?.value.trim();
+                const areYouPL = document.querySelector('input[name="areYouPL"]:checked')?.value;
+                if (!projectTitle || !areYouPL) return false;
 
-            <div class="input-field">
-                <label for="comment-text">Comment</label>
-                <textarea
-                    id="comment-text"
-                    rows="4"
-                    placeholder="Enter your comment here..."
-                ></textarea>
-            </div>
+                // Validate project title format
+                if (!isValidProjectTitle(projectTitle)) return false;
+            }
 
-            <div class="radio-group">
-                <label class="radio-label">Are you the PL? ${isMicrositeWork ? '*' : ''}</label>
-                <div class="radio-options">
-                    <label class="radio-option">
-                        <input type="radio"
-                               id="areYouPLYes"
-                               name="areYouPL"
-                               value="Yes"
-                               ${!isMicrositeWork ? 'disabled' : ''}>
-                        <span class="radio-label">Yes</span>
-                    </label>
+            if (wasPreviousConductProject && relatedAuditsInput) {
+                const auditCount = relatedAuditsInput.value.trim();
+                if (!auditCount || isNaN(auditCount) || parseInt(auditCount) < 0) return false;
+            }
 
-                    <label class="radio-option">
-                        <input type="radio"
-                               id="areYouPLNo"
-                               name="areYouPL"
-                               value="No"
-                               ${!isMicrositeWork ? 'disabled' : ''}>
-                        <span class="radio-label">No</span>
-                    </label>
-
-                    <label class="radio-option">
-                        <input type="radio"
-                               id="areYouPLNA"
-                               name="areYouPL"
-                               value="N/A"
-                               ${!isMicrositeWork ? 'disabled' : ''}>
-                        <span class="radio-label">N/A</span>
-                    </label>
-                </div>
-            </div>
-
-            <div class="button-group">
-                <button type="button" id="submit-btn" class="popup-button">
-                    Submit
-                </button>
-                <button type="button" id="cancel-btn" class="popup-button">
-                    Cancel
-                </button>
-            </div>
-        </div>
-    `;
-
-        document.body.appendChild(popup);
+            return true;
+        }
 
         // Helper function to validate project title format
         function isValidProjectTitle(title) {
-            // Check if it's just numbers
             if (/^\d+$/.test(title)) return true;
-
-            // Check for WF- prefix followed by numbers
             if (/^WF-\d+$/.test(title)) return true;
-
-            // Check for Microsite- prefix followed by numbers
             if (/^Microsite-\d+$/.test(title)) return true;
-
-            // Check for CL- prefix followed by any characters
             if (/^CL-.*$/.test(title)) return true;
-
+            if (/^QA-.*$/.test(title)) return true;
             return false;
         }
 
-        document.getElementById('submit-btn').addEventListener('click', function() {
-            const projectTitle = document.getElementById('projectTitle').value;
-            const comment = document.getElementById('comment-text').value;
-            const areYouPL = document.querySelector('input[name="areYouPL"]:checked')?.value;
+        // Add event listeners for validation
+        const inputs = [commentInput];
+        if (isMicrositeWork && projectTitleInput) inputs.push(projectTitleInput);
+        if (wasPreviousConductProject && relatedAuditsInput) inputs.push(relatedAuditsInput);
 
-            // Validate project title format if it's provided
-            if (projectTitle && !isValidProjectTitle(projectTitle)) {
-                showCustomAlert('Invalid project title format. Please use one of: numbers only, WF-123456, or Microsite-123456');
-                return;
-            }
-
-            // Check if required fields are filled when necessary
-            if (isMicrositeWork && (!projectTitle || !areYouPL)) {
-                showCustomAlert('Please fill in both Project Title and Are you the PL? fields as they are required for Microsite Project Work.');
-                return;
-            }
-
-            if (comment.trim() === '') {
-                showCustomAlert('Please enter a comment before submitting.');
-                return;
-            }
-
-            submitCombinedData(auxLabel, callback);
-            closePopup();
-        });
-
-        document.getElementById('cancel-btn').addEventListener('click', function() {
-            closePopup();
-        });
-
-        function closePopup() {
-            const popup = document.getElementById('combined-popup');
-            if (!popup) {
-                console.warn('Popup element not found, skipping close operation.');
-                return;
-            }
-
-            popup.style.animation = 'popupOut 0.3s forwards';
-            setTimeout(() => {
-                if (popup.parentNode) {
-                    popup.remove();
-                }
-            }, 300);
+        function updateSubmitButton() {
+            // Always keep submit button enabled
+            submitBtn.disabled = false;
+            submitBtn.style.opacity = '1';
         }
 
-        window.addEventListener('beforeunload', function(e) {
-            const popup = document.getElementById('combined-popup');
-            if (popup) {
-                e.preventDefault();
-                e.returnValue = '';
+        inputs.forEach(input => {
+            if (input) {
+                input.addEventListener('input', updateSubmitButton);
             }
         });
+
+        if (isMicrositeWork) {
+            const radioButtons = document.querySelectorAll('input[name="areYouPL"]');
+            radioButtons.forEach(radio => {
+                radio.addEventListener('change', updateSubmitButton);
+            });
+        }
+
+        // Remove existing event listeners
+        submitBtn.removeEventListener('click', submitBtn.onclick);
+        cancelBtn.removeEventListener('click', cancelBtn.onclick);
+
+        // Submit handler
+        submitBtn.addEventListener('click', () => {
+            if (isMicrositeWork) {
+                // Check for empty fields first
+                if (!commentInput.value.trim()) {
+                    showCustomAlert('Comment field cannot be empty');
+                    return;
+                }
+                if (!projectTitleInput?.value.trim()) {
+                    showCustomAlert('Project Title field cannot be empty');
+                    return;
+                }
+                if (!document.querySelector('input[name="areYouPL"]:checked')) {
+                    showCustomAlert('Please select if you are the PL');
+                    return;
+                }
+                if (relatedAuditsInput && !relatedAuditsInput.value.trim()) {
+                    showCustomAlert('Related Audits field cannot be empty');
+                    return;
+                }
+
+                // Then check for invalid formats
+                const projectTitle = projectTitleInput.value.trim();
+                if (!(/^\d+$/.test(projectTitle) ||
+                      /^WF-\d+$/.test(projectTitle) ||
+                      /^Microsite-\d+$/.test(projectTitle) ||
+                      /^CL-.*$/.test(projectTitle) ||
+                      /^QA-.*$/.test(projectTitle))) {
+                    showCustomAlert('Invalid project title format. Must be numbers only, WF-numbers, Microsite-numbers, CL-anything, or QA-anything');
+                    return;
+                }
+
+                if (relatedAuditsInput && !/^\d+$/.test(relatedAuditsInput.value.trim())) {
+                    showCustomAlert('Audit count must be a valid number');
+                    return;
+                }
+            }
+
+            // If all validations pass, proceed with saving and callback
+            const data = {
+                comment: commentInput.value.trim(),
+                projectTitle: projectTitleInput ? projectTitleInput.value.trim() : 'N/A',
+                areYouPL: document.querySelector('input[name="areYouPL"]:checked')?.value || 'N/A',
+                relatedAudits: relatedAuditsInput ? relatedAuditsInput.value.trim() : 'N/A'
+            };
+
+            // Save to localStorage
+            localStorage.setItem('comment-' + auxLabel, data.comment);
+            localStorage.setItem('projectTitle-' + auxLabel, data.projectTitle);
+            localStorage.setItem('areYouPL-' + auxLabel, data.areYouPL);
+            localStorage.setItem('relatedAudits-' + auxLabel, data.relatedAudits);
+
+            popup.remove();
+            callback(data);
+        });
+
+        // Keep the cancel button handler the same
+        // Cancel button handler
+        cancelBtn.addEventListener('click', () => {
+            if (isMicrositeWork) {
+                // Always show alert for Microsite Project Work, regardless of field values
+                showCustomAlert('Please fill all required fields before proceeding');
+                return;
+            }
+            popup.remove();
+        });
+
+
+        // Initial validation
+        updateSubmitButton();
     }
 
     // Helper function to extract aux values from auxLabel
@@ -7030,91 +8747,105 @@
 
     function submitCombinedData(auxLabel, callback) {
         const submitBtn = document.getElementById('submit-btn');
+        const cancelBtn = document.getElementById('cancel-project-details');
 
         // Get all form inputs
         const comment = document.getElementById('comment-text')?.value || '';
         const projectTitle = document.getElementById('projectTitle')?.value || '';
         const relatedAudits = document.getElementById('relatedAudits')?.value || '';
         const selectedRadio = document.querySelector('input[name="areYouPL"]:checked');
-        const areYouPL = selectedRadio ? selectedRadio.value : 'N/A';
-
-        // Save to localStorage immediately
-        localStorage.setItem('comment-' + auxLabel, comment);
-        localStorage.setItem('areYouPL-' + auxLabel, areYouPL);
-        localStorage.setItem('projectTitle-' + auxLabel, projectTitle);
-        localStorage.setItem('relatedAudits-' + auxLabel, relatedAudits);
+        const areYouPL = selectedRadio ? selectedRadio.value : '';
 
         // Check if the current AUX is Microsite Project Work
         const isMicrositeWork = auxLabel.startsWith('Microsite Project Work');
 
-        // Validate inputs based on conditions
-        function validateInputs() {
-            // Always require comment
-            if (comment.trim() === '') {
-                return false;
-            }
-
-            // For Microsite Project Work, require project title and areYouPL
-            if (isMicrositeWork) {
-                if (!projectTitle || !areYouPL) {
-                    return false;
-                }
-            }
-
-            // For required audit counts
-            const requiresAuditCount = document.getElementById('relatedAudits')?.disabled === false;
-            if (requiresAuditCount && !relatedAudits) {
-                return false;
-            }
-
-            return true;
-        }
-
-        // Add input event listeners to all required fields
-        const inputs = [
-            document.getElementById('comment-text'),
-            ...(isMicrositeWork ? [document.getElementById('projectTitle')] : []),
-            ...(document.getElementById('relatedAudits')?.disabled === false ?
-                [document.getElementById('relatedAudits')] : [])
-        ];
-
-        const radioButtons = document.querySelectorAll('input[name="areYouPL"]');
-
-        function updateSubmitButton() {
-            submitBtn.disabled = !validateInputs();
-            submitBtn.style.opacity = submitBtn.disabled ? '0.6' : '1';
-        }
-
-        // Add event listeners
-        inputs.forEach(input => {
-            if (input) {
-                input.addEventListener('input', updateSubmitButton);
-            }
-        });
-
-        radioButtons.forEach(radio => {
-            radio.addEventListener('change', updateSubmitButton);
-        });
-
-        // Initial button state
-        updateSubmitButton();
-
         // Submit handler
         submitBtn.onclick = () => {
-            if (validateInputs()) {
-                const popup = document.getElementById('combined-popup');
-                if (popup) {
-                    popup.remove();
+            // Validate all required fields
+            if (isMicrositeWork) {
+                // Check for empty fields
+                if (!comment.trim()) {
+                    showCustomAlert('Comment field cannot be empty');
+                    return;
+                }
+                if (!projectTitle.trim()) {
+                    showCustomAlert('Project Title field cannot be empty');
+                    return;
+                }
+                if (!areYouPL) {
+                    showCustomAlert('Please select if you are the PL');
+                    return;
+                }
+                if (!relatedAudits.trim()) {
+                    showCustomAlert('Related Audits field cannot be empty');
+                    return;
                 }
 
-                callback({
-                    comment,
-                    areYouPL,
-                    projectTitle,
-                    relatedAudits
-                });
+                // Validate project title format
+                if (!isValidProjectTitle(projectTitle)) {
+                    showCustomAlert('Invalid project title format. Must be numbers only, WF-numbers, Microsite-numbers, CL-anything, or QA-anything');
+                    return;
+                }
+
+                // Validate audit count format
+                if (!/^\d+$/.test(relatedAudits)) {
+                    showCustomAlert('Audit count must be a valid number');
+                    return;
+                }
+            }
+
+            // If all validations pass, save to localStorage
+            localStorage.setItem('comment-' + auxLabel, comment);
+            localStorage.setItem('areYouPL-' + auxLabel, areYouPL);
+            localStorage.setItem('projectTitle-' + auxLabel, projectTitle);
+            localStorage.setItem('relatedAudits-' + auxLabel, relatedAudits);
+
+            // Close popup and call callback
+            const popup = document.getElementById('combined-popup');
+            if (popup) {
+                popup.remove();
+            }
+
+            callback({
+                comment,
+                areYouPL,
+                projectTitle,
+                relatedAudits
+            });
+        };
+
+        // Cancel button handler
+        cancelBtn.onclick = () => {
+            // Check if any field has a value
+            if (isMicrositeWork && (
+                comment.trim() ||
+                projectTitle.trim() ||
+                areYouPL ||
+                relatedAudits.trim()
+            )) {
+                showCustomAlert('Please fill all required fields before proceeding');
+                return;
+            }
+
+            // Only allow cancel if no fields have values
+            const popup = document.getElementById('combined-popup');
+            if (popup) {
+                popup.remove();
             }
         };
+
+        function isValidProjectTitle(title) {
+            if (isMicrositeWork) {
+                return (
+                    /^\d+$/.test(title) || // Numbers only
+                    /^WF-\d+$/.test(title) || // WF-numbers
+                    /^Microsite-\d+$/.test(title) || // Microsite-numbers
+                    /^CL-.*$/.test(title) || // CL-anything
+                    /^QA-.*$/.test(title) // QA-anything
+                );
+            }
+            return true;
+        }
     }
 
     ///////////////////////////////////////////////////////////////
@@ -8387,41 +10118,41 @@
         }
     }
 
-    // Helper function to get Combi time range
-    function getCombiTimeRange(combiId) {
-        const combiMap = {
-            'Combi1': '6am - 3pm',
-            'Combi2': '7am - 6pm',
-            'Combi3': '8am - 7pm',
-            'Combi4': '9am - 7pm',
-            'Combi5': '10am - 9pm',
-            'Combi6': '11am - 10pm',
-            'Combi7': '12pm - 11pm',
-            'Combi8': '1pm - 12am'
-        };
-        return combiMap[combiId] || 'Invalid Combi';
-    }
+// Helper function to get Combi time range
+function getCombiTimeRange(combiId) {
+    const combiMap = {
+        'Combi1': '6am - 3pm',
+        'Combi2': '7am - 6pm',
+        'Combi3': '8am - 7pm',
+        'Combi4': '9am - 7pm',
+        'Combi5': '10am - 9pm',
+        'Combi6': '11am - 10pm',
+        'Combi7': '12pm - 11pm',
+        'Combi8': '1pm - 12am'
+    };
+    return combiMap[combiId] || 'Invalid Combi';
+}
 
-    // Helper function to update stats based on filtered data
-    function updateFilteredStats(data, filterValue) {
-        const now = new Date();
-        const filteredData = data.filter(project => {
-            const projectDate = new Date(project.date);
-            if (filterValue === 'today') {
-                return projectDate.toDateString() === now.toDateString();
-            } else if (filterValue === 'week') {
-                const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
-                return projectDate >= weekAgo;
-            } else if (filterValue === 'month') {
-                return projectDate.getMonth() === now.getMonth() &&
-                    projectDate.getFullYear() === now.getFullYear();
-            }
-            return true;
-        });
+// Helper function to update stats based on filtered data
+function updateFilteredStats(data, filterValue) {
+    const now = new Date();
+    const filteredData = data.filter(project => {
+        const projectDate = new Date(project.date);
+        if (filterValue === 'today') {
+            return projectDate.toDateString() === now.toDateString();
+        } else if (filterValue === 'week') {
+            const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+            return projectDate >= weekAgo;
+        } else if (filterValue === 'month') {
+            return projectDate.getMonth() === now.getMonth() &&
+                projectDate.getFullYear() === now.getFullYear();
+        }
+        return true;
+    });
 
-        const statsContainer = document.querySelector('.stats-grid');
-        if (statsContainer) {
-            statsContainer.innerHTML = `
+    const statsContainer = document.querySelector('.stats-grid');
+    if (statsContainer) {
+        statsContainer.innerHTML = `
             <div class="stat-card">
                 <span class="stat-value">${filteredData.length}</span>
                 <span class="stat-label">Updates</span>
@@ -8434,24 +10165,24 @@
         }
     }
 
-    function filterTodayProjects(data) {
-        const today = new Date().toISOString().split('T')[0];
-        return data.filter(project => {
-            const projectDate = new Date(project.date).toISOString().split('T')[0];
-            return projectDate === today;
-        });
+function filterTodayProjects(data) {
+    const today = new Date().toISOString().split('T')[0];
+    return data.filter(project => {
+        const projectDate = new Date(project.date).toISOString().split('T')[0];
+        return projectDate === today;
+    });
+}
+
+function editProjectDetails(projectId, allData) {
+    const project = allData.find(p => p.date === projectId);
+    if (!project) {
+        showCustomAlert('Project not found');
+        return;
     }
 
-    function editProjectDetails(projectId, allData) {
-        const project = allData.find(p => p.date === projectId);
-        if (!project) {
-            showCustomAlert('Project not found');
-            return;
-        }
-
-        const modal = document.createElement('div');
-        modal.className = 'project-modal';
-        modal.innerHTML = `
+    const modal = document.createElement('div');
+    modal.className = 'project-modal';
+    modal.innerHTML = `
         <div class="modal-content">
             <h2>Edit Project Details</h2>
             <div class="form-group">
@@ -8502,16 +10233,16 @@
         document.getElementById('close-modal').addEventListener('click', closeModal);
     }
 
-    function viewProjectDetails(projectId, allData) {
-        const project = allData.find(p => p.date === projectId);
-        if (!project) {
-            showCustomAlert('Project not found');
-            return;
-        }
+function viewProjectDetails(projectId, allData) {
+    const project = allData.find(p => p.date === projectId);
+    if (!project) {
+        showCustomAlert('Project not found');
+        return;
+    }
 
-        const modal = document.createElement('div');
-        modal.className = 'project-modal';
-        modal.innerHTML = `
+    const modal = document.createElement('div');
+    modal.className = 'project-modal';
+    modal.innerHTML = `
         <div class="modal-content">
             <h2>Project Details</h2>
             <p><strong>Date:</strong> ${new Date(project.date).toLocaleString()}</p>
@@ -8534,87 +10265,24 @@
         document.getElementById('close-modal').addEventListener('click', closeModal);
     }
 
-    async function deleteProjectDetails(projectId) {
-        try {
-            showCustomConfirm('Are you sure you want to delete this project details?', async (confirmed) => {
-                if (!confirmed) return;
+async function deleteProjectDetails(projectId) {
+    try {
+        showCustomConfirm('Are you sure you want to delete this project details?', async (confirmed) => {
+            if (!confirmed) return;
 
-                // Get current credentials or authenticate
-                let token;
-                try {
-                    const credentials = await showAuthModal();
-                    if (!credentials) throw new Error('Authentication cancelled');
-                    token = await AuthService.ensureAuthenticated();
-                    await configureAWS(token);
-                } catch (error) {
-                    showCustomAlert('Authentication failed');
-                    return;
-                }
-
-                // Configure AWS
-                AWS.config.update({
-                    region: 'eu-north-1',
-                    credentials: new AWS.CognitoIdentityCredentials({
-                        IdentityPoolId: 'eu-north-1:98c07095-e731-4219-bebe-db4dab892ea8',
-                        Logins: {
-                            'cognito-idp.eu-north-1.amazonaws.com/eu-north-1_V9kLPNVXl': token
-                        }
-                    })
-                });
-
-                // Initialize S3
-                const s3 = new AWS.S3();
-                const bucketName = 'project-details-bucket';
-                const dateStr = new Date(projectId).toISOString().split('T')[0];
-                const username = localStorage.getItem("currentUsername");
-                const timestamp = new Date(projectId).getTime();
-                const key = `project_details_${username}_${dateStr}_${timestamp}.json`;
-
-                // Delete the file
-                await s3.deleteObject({
-                    Bucket: bucketName,
-                    Key: key
-                }).promise();
-
-                showCustomAlert('Project details deleted successfully');
-
-                // Refresh the dashboard
-                const dashboard = document.querySelector('.project-dashboard');
-                if (dashboard) {
-                    dashboard.remove();
-                    await showProjectDashboard();
-                }
-            });
-        } catch (error) {
-            console.error('Error deleting project details:', error);
-            showCustomAlert('Failed to delete project details');
-        }
-    }
-
-    function closeModal() {
-        const modal = document.querySelector('.project-modal');
-        if (modal) {
-            modal.remove();
-        }
-    }
-
-    async function updateProjectDetails(projectId) {
-        try {
-            // Get the current user's credentials and authenticate
-            await loadAwsSdk();
-            const credentials = await showAuthModal();
-
-            if (!credentials) {
-                throw new Error('Authentication cancelled');
+            // Get current credentials or authenticate
+            let token;
+            try {
+                const credentials = await showAuthModal();
+                if (!credentials) throw new Error('Authentication cancelled');
+                token = await AuthService.ensureAuthenticated();
+                await configureAWS(token);
+            } catch (error) {
+                showCustomAlert('Authentication failed');
+                return;
             }
 
-            const token = await AuthService.ensureAuthenticated();
-            await configureAWS(token);
-            if (!token) {
-                throw new Error('Authentication failed');
-            }
-
-            // Configure AWS with the authenticated credentials
+            // Configure AWS
             AWS.config.update({
                 region: 'eu-north-1',
                 credentials: new AWS.CognitoIdentityCredentials({
@@ -8625,315 +10293,59 @@
                 })
             });
 
-            // Wait for credentials to be initialized
-            await new Promise((resolve, reject) => {
-                AWS.config.credentials.get(err => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-
-            // Use current date and time instead of original projectId
-            const currentDate = new Date();
-            const currentISOString = currentDate.toISOString();
-
-            const updatedData = {
-                date: currentISOString,
-                username: localStorage.getItem("currentUsername"),
-                combi: document.getElementById('edit-combi-select').value,
-                activeProjects: document.getElementById('edit-active-projects').value,
-                backupPOC: document.getElementById('edit-backup-poc').value,
-                projectHours: document.getElementById('edit-project-hours').value,
-                parkedProjects: document.getElementById('edit-parked-projects').value,
-                projectETA: document.getElementById('edit-project-eta').value,
-                comments: document.getElementById('edit-project-comments').value
-            };
-
-            // Validate required fields
-            if (!updatedData.combi || !updatedData.activeProjects || !updatedData.projectHours || !updatedData.projectETA) {
-                throw new Error('Please fill in all required fields');
-            }
-
+            // Initialize S3
             const s3 = new AWS.S3();
             const bucketName = 'project-details-bucket';
-
-            // Create a unique key for the updated file
             const dateStr = new Date(projectId).toISOString().split('T')[0];
+            const username = localStorage.getItem("currentUsername");
             const timestamp = new Date(projectId).getTime();
-            const key = `project_details_${updatedData.username}_${dateStr}_${timestamp}.json`;
+            const key = `project_details_${username}_${dateStr}_${timestamp}.json`;
 
-            // First, delete the old file
-            try {
-                await s3.deleteObject({
-                    Bucket: bucketName,
-                    Key: key
-                }).promise();
-            } catch (error) {
-                console.log('No existing file to delete or error deleting:', error);
-            }
-
-            // Then save the updated data
-            await s3.putObject({
+            // Delete the file
+            await s3.deleteObject({
                 Bucket: bucketName,
-                Key: key,
-                Body: JSON.stringify(updatedData),
-                ContentType: 'application/json',
-                CacheControl: 'no-cache, no-store, must-revalidate'
+                Key: key
             }).promise();
 
-            showCustomAlert('Project details updated successfully!');
-            closeModal();
+            showCustomAlert('Project details deleted successfully');
 
-            // Force a complete refresh of the dashboard
+            // Refresh the dashboard
             const dashboard = document.querySelector('.project-dashboard');
             if (dashboard) {
                 dashboard.remove();
-            }
-
-            // Small delay to ensure the old dashboard is removed
-            setTimeout(async () => {
                 await showProjectDashboard();
-            }, 100);
-
-        } catch (error) {
-            console.error('Error updating project details:', error);
-            showCustomAlert(error.message || 'Error updating project details');
-        }
-    }
-
-    function closeEditForm() {
-        const popup = document.querySelector('.project-details-popup');
-        if (popup) {
-            popup.remove();
-        }
-    }
-
-    function downloadProjectDetails(data) {
-        const headers = [
-            'Date',
-            'Username',
-            'Combi',
-            'Active Projects',
-            'Backup POC',
-            'Project Hours',
-            'Parked Projects',
-            'Project ETA',
-            'Comments'
-        ];
-
-        const csvContent = [
-            headers.join(','),
-            ...data.map(project => [
-                new Date(project.date).toISOString(),
-                project.username,
-                `"${project.combi || ''}"`,
-                `"${project.activeProjects}"`,
-                `"${project.backupPOC || ''}"`,
-                project.projectHours,
-                `"${project.parkedProjects || ''}"`,
-                `"${project.projectETA}"`,
-                `"${(project.comments || '').replace(/"/g, '""')}"`,
-            ].join(','))
-        ].join('\n');
-
-        const blob = new Blob([csvContent], { type: 'text/csv' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `project_details_${new Date().toISOString().split('T')[0]}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
-    }
-
-    document.getElementById('getProjectDetailsButton').addEventListener('click', function() {
-        showCustomAlert('This option is no longer available')
-    });
-    ///////////////////////////////////////////////////////
-    //Real-time efficiency tracker
-    let dashboardUpdateInterval;
-    let dashboardAnimationFrame;
-    let lastUpdates = [];
-    let currentFilter = 'all';
-    let currentSearchTerm = '';
-
-    // Add this to the setInitialLoginTime function to debug
-    async function setInitialLoginTime() {
-        try {
-
-            await loadAwsSdk();
-            await loadCognitoSdk();
-
-            const today = new Date().toISOString().split('T')[0];
-            const username = localStorage.getItem("currentUsername");
-
-            // Get AWS credentials
-            const token = await AuthService.ensureAuthenticated();
-            await configureAWS(token);
-
-            const s3 = new AWS.S3();
-            const bucketName = 'real-time-databucket';
-            const key = `login-times/${username}_${today}.json`;
-
-            try {
-                // Try to get existing login time for today
-                const existingData = await s3.getObject({
-                    Bucket: bucketName,
-                    Key: key
-                }).promise();
-
-                const data = JSON.parse(existingData.Body.toString());
-                return data.loginTime; // Return existing login time
-
-            } catch (error) {
-                if (error.code === 'NoSuchKey') {
-                    // No existing login time, set new one
-                    const newLoginTime = new Date().toISOString();
-                    const loginData = {
-                        username: username,
-                        date: today,
-                        loginTime: newLoginTime
-                    };
-
-                    await s3.putObject({
-                        Bucket: bucketName,
-                        Key: key,
-                        Body: JSON.stringify(loginData),
-                        ContentType: 'application/json',
-                        CacheControl: 'no-cache, no-store, must-revalidate'
-                    }).promise();
-
-                    return newLoginTime;
-                }
-                throw error;
             }
-        } catch (error) {
-            console.error('Error setting initial login time:', error);
-            return null;
-        }
+        });
+    } catch (error) {
+        console.error('Error deleting project details:', error);
+        showCustomAlert('Failed to delete project details');
     }
+}
 
-
-    function setLogoutTime(auxLabel) {
-        const today = new Date().toISOString().split('T')[0];
-        const storedDate = localStorage.getItem('lastLogoutDate');
-
-        if (storedDate !== today) {
-            // New day - clear previous logout time
-            localStorage.removeItem('dailyLogoutTime');
-        }
-
-        if (auxLabel.toLowerCase().includes('offline') && !localStorage.getItem('dailyLogoutTime')) {
-            localStorage.setItem('dailyLogoutTime', new Date().toISOString());
-            localStorage.setItem('lastLogoutDate', today);
-        }
+function closeModal() {
+    const modal = document.querySelector('.project-modal');
+    if (modal) {
+        modal.remove();
     }
+}
 
-    function clearDailyTimes() {
-        const today = new Date().toISOString().split('T')[0];
-        const lastDate = localStorage.getItem('lastActiveDate');
+async function updateProjectDetails(projectId) {
+    try {
+        // Get the current user's credentials and authenticate
+        await loadAwsSdk();
+        const credentials = await showAuthModal();
 
-        if (lastDate !== today) {
-            localStorage.removeItem('firstAuxUpdateTime');
-            localStorage.removeItem('offlineTime');
-            localStorage.setItem('lastActiveDate', today);
+        if (!credentials) {
+            throw new Error('Authentication cancelled');
         }
-    }
 
-    function calculateTotalSteppingAwayTime(username) {
-        try {
-            // Get saved AUX data from localStorage
-            const auxData = JSON.parse(localStorage.getItem('auxData')) || [];
-
-            // Filter for Stepping Away entries for the current user and current date
-            const today = new Date().toISOString().split('T')[0];
-            const steppingAwayEntries = auxData.filter(entry =>
-                                                       entry.username === username &&
-                                                       entry.auxLabel.includes('Stepping Away') &&
-                                                       entry.date.includes(today)
-                                                      );
-
-            // Sum up all Stepping Away time
-            const totalTime = steppingAwayEntries.reduce((total, entry) => {
-                // Convert HH:MM:SS to milliseconds
-                if (typeof entry.timeSpent === 'string' && entry.timeSpent.includes(':')) {
-                    const [hours, minutes, seconds] = entry.timeSpent.split(':').map(Number);
-                    return total + ((hours * 3600 + minutes * 60 + seconds) * 1000);
-                }
-                // If timeSpent is already in milliseconds
-                return total + (parseInt(entry.timeSpent) || 0);
-            }, 0);
-
-            return totalTime;
-        } catch (error) {
-            console.error('Error calculating total stepping away time:', error);
-            return 0;
+        const token = await AuthService.ensureAuthenticated();
+        await configureAWS(token);
+        if (!token) {
+            throw new Error('Authentication failed');
         }
-    }
 
-    async function showDashboard() {
-        try {
-            // First load both SDKs
-            await loadAwsSdk();
-            await loadCognitoSdk();
-
-            const token = await AuthService.ensureAuthenticated();
-            if (!token) {
-                throw new Error('Authentication failed');
-            }
-
-            if (token) {
-                // Configure AWS with the token
-                await configureAWS(token);
-
-                // Only initialize dashboard after AWS is configured
-                await initializeDashboard();
-            }
-
-        } catch (error) {
-            console.error('Dashboard initialization error:', error);
-            showCustomAlert('Failed to initialize dashboard: ' + error.message);
-        }
-    }
-
-
-    async function startDashboardUpdates() {
-        try {
-            await updateDashboardData(true); // Initial update
-
-            // Use requestAnimationFrame for smooth updates
-            function updateLoop() {
-                if (document.getElementById('aux-dashboard')) {
-                    updateDashboardTimers();
-                    requestAnimationFrame(updateLoop);
-                }
-            }
-
-            requestAnimationFrame(updateLoop);
-
-            // Keep the interval for data refresh, but not for timer updates
-            dashboardUpdateInterval = setInterval(() => updateDashboardData(false), 30000);
-
-        } catch (error) {
-            console.error('Failed to start dashboard updates:', error);
-            showCustomAlert('Failed to initialize dashboard updates');
-        }
-    }
-
-    function stopDashboardUpdates() {
-        if (dashboardAnimationFrame) {
-            cancelAnimationFrame(dashboardAnimationFrame);
-            dashboardAnimationFrame = null;
-        }
-        if (dashboardUpdateInterval) {
-            clearInterval(dashboardUpdateInterval);
-            dashboardUpdateInterval = null;
-        }
-    }
-
-    // Helper function to update AWS credentials
-    async function updateAWSCredentials(token) {
+        // Configure AWS with the authenticated credentials
         AWS.config.update({
             region: 'eu-north-1',
             credentials: new AWS.CognitoIdentityCredentials({
@@ -8944,58 +10356,435 @@
             })
         });
 
-        // Wait for credentials to be refreshed
-        return new Promise((resolve, reject) => {
+        // Wait for credentials to be initialized
+        await new Promise((resolve, reject) => {
             AWS.config.credentials.get(err => {
                 if (err) reject(err);
                 else resolve();
             });
         });
-    }
 
-    // Helper function to calculate user status
-    function calculateUserStatus(lastUpdateTime, auxLabel) {
-        console.log('Calculating status:', { lastUpdateTime, auxLabel });
+        // Use current date and time instead of original projectId
+        const currentDate = new Date();
+        const currentISOString = currentDate.toISOString();
 
-        if (auxLabel && auxLabel.toLowerCase().includes('stepping away')) {
-            return 'paused';
+        const updatedData = {
+            date: currentISOString,
+            username: localStorage.getItem("currentUsername"),
+            combi: document.getElementById('edit-combi-select').value,
+            activeProjects: document.getElementById('edit-active-projects').value,
+            backupPOC: document.getElementById('edit-backup-poc').value,
+            projectHours: document.getElementById('edit-project-hours').value,
+            parkedProjects: document.getElementById('edit-parked-projects').value,
+            projectETA: document.getElementById('edit-project-eta').value,
+            comments: document.getElementById('edit-project-comments').value
+        };
+
+        // Validate required fields
+        if (!updatedData.combi || !updatedData.activeProjects || !updatedData.projectHours || !updatedData.projectETA) {
+            throw new Error('Please fill in all required fields');
         }
 
-        if (auxLabel && auxLabel.toLowerCase().includes('offline')) {
-            return 'inactive';
-        }
+        const s3 = new AWS.S3();
+        const bucketName = 'project-details-bucket';
 
-        if (auxLabel && auxLabel.toLowerCase().includes('undefined')) {
-            return 'inactive';
-        }
+        // Create a unique key for the updated file
+        const dateStr = new Date(projectId).toISOString().split('T')[0];
+        const timestamp = new Date(projectId).getTime();
+        const key = `project_details_${updatedData.username}_${dateStr}_${timestamp}.json`;
 
-        if (auxLabel && auxLabel.toLowerCase().includes('on break')) {
-            return 'away';
-        }
-
-        return auxLabel ? 'active' : 'inactive';
-
-    }
-
-    async function initializeDashboard() {
+        // First, delete the old file
         try {
-            // Load required SDKs
-            await loadAwsSdk();
-            await loadCognitoSdk();
+            await s3.deleteObject({
+                Bucket: bucketName,
+                Key: key
+            }).promise();
+        } catch (error) {
+            console.log('No existing file to delete or error deleting:', error);
+        }
 
-            let dashboard = document.getElementById('aux-dashboard');
-            if (dashboard) {
-                stopDashboardUpdates();
-                dashboard.remove();
-                return;
+        // Then save the updated data
+        await s3.putObject({
+            Bucket: bucketName,
+            Key: key,
+            Body: JSON.stringify(updatedData),
+            ContentType: 'application/json',
+            CacheControl: 'no-cache, no-store, must-revalidate'
+        }).promise();
+
+        showCustomAlert('Project details updated successfully!');
+        closeModal();
+
+        // Force a complete refresh of the dashboard
+        const dashboard = document.querySelector('.project-dashboard');
+        if (dashboard) {
+            dashboard.remove();
+        }
+
+        // Small delay to ensure the old dashboard is removed
+        setTimeout(async () => {
+            await showProjectDashboard();
+        }, 100);
+
+    } catch (error) {
+        console.error('Error updating project details:', error);
+        showCustomAlert(error.message || 'Error updating project details');
+    }
+}
+
+function closeEditForm() {
+    const popup = document.querySelector('.project-details-popup');
+    if (popup) {
+        popup.remove();
+    }
+}
+
+function downloadProjectDetails(data) {
+    const headers = [
+        'Date',
+        'Username',
+        'Combi',
+        'Active Projects',
+        'Backup POC',
+        'Project Hours',
+        'Parked Projects',
+        'Project ETA',
+        'Comments'
+    ];
+
+    const csvContent = [
+        headers.join(','),
+        ...data.map(project => [
+            new Date(project.date).toISOString(),
+            project.username,
+            `"${project.combi || ''}"`,
+            `"${project.activeProjects}"`,
+            `"${project.backupPOC || ''}"`,
+            project.projectHours,
+            `"${project.parkedProjects || ''}"`,
+            `"${project.projectETA}"`,
+            `"${(project.comments || '').replace(/"/g, '""')}"`,
+        ].join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `project_details_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+}
+
+document.getElementById('getProjectDetailsButton').addEventListener('click', function() {
+    showCustomAlert('This option is no longer available')
+});
+///////////////////////////////////////////////////////
+//Real-time efficiency tracker
+let dashboardUpdateInterval;
+let dashboardAnimationFrame;
+let lastUpdates = [];
+let currentFilter = 'all';
+let currentSearchTerm = '';
+
+// Add this to the setInitialLoginTime function to debug
+async function setInitialLoginTime() {
+    try {
+        await loadAwsSdk();
+        await loadCognitoSdk();
+
+        const today = new Date().toISOString().split('T')[0];
+        const username = localStorage.getItem("currentUsername");
+
+        // Format current time in local timezone
+        const localLoginTime = new Date().toLocaleTimeString('en-US', {
+            hour: 'numeric',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+        });
+
+        // Get AWS credentials
+        const token = await AuthService.ensureAuthenticated();
+        await configureAWS(token);
+
+        const s3 = new AWS.S3();
+        const key = `login-times/${username}_${today}.json`;
+
+        try {
+            // Try to get existing login time for today
+            const existingData = await s3.getObject({
+                Bucket: 'real-time-databucket',
+                Key: key
+            }).promise();
+
+            const data = JSON.parse(existingData.Body.toString());
+
+            // If we have existing login data but no unique ID yet, generate one
+            if (!data.uniqueId) {
+                await generateDailyUniqueId();
             }
 
-            // Create dashboard container
-            dashboard = document.createElement('div');
-            dashboard.id = 'aux-dashboard';
+            return data.loginTime; // Return existing login time
 
-            // Add dashboard styles
-            const styles = `
+        } catch (error) {
+            if (error.code === 'NoSuchKey') {
+                // No existing login time, set new one AND generate unique ID
+                const loginData = {
+                    username: username,
+                    date: today,
+                    loginTime: localLoginTime
+                };
+
+                await s3.putObject({
+                    Bucket: 'real-time-databucket',
+                    Key: key,
+                    Body: JSON.stringify(loginData),
+                    ContentType: 'application/json',
+                    CacheControl: 'no-cache, no-store, must-revalidate'
+                }).promise();
+
+                // Generate unique ID for the new login
+                await generateDailyUniqueId();
+
+                localStorage.setItem('dailyLoginTime', localLoginTime);
+                return localLoginTime;
+            }
+            throw error;
+        }
+    } catch (error) {
+        console.error('Error setting initial login time:', error);
+        return null;
+    }
+}
+
+async function setLogoutTime(auxLabel) {
+    try {
+        const today = new Date().toISOString().split('T')[0];
+        const username = localStorage.getItem("currentUsername");
+
+        // Only proceed if the AUX label indicates offline status
+        if (auxLabel.toLowerCase().includes('offline')) {
+            const logoutTime = new Date().toLocaleTimeString('en-US', {
+                hour: 'numeric',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: true
+            });
+
+            // Store in localStorage
+            localStorage.setItem('dailyLogoutTime', logoutTime);
+            localStorage.setItem('lastLogoutDate', today);
+
+            // Get AWS credentials and configure
+            const token = await AuthService.ensureAuthenticated();
+            await configureAWS(token);
+            const s3 = new AWS.S3();
+
+            // Prepare the data
+            const logoutData = {
+                username: username,
+                date: today,
+                logoutTime: logoutTime,
+                auxLabel: auxLabel
+            };
+
+            // Store in S3
+            await s3.putObject({
+                Bucket: 'real-time-databucket',
+                Key: `logout-times/${username}_${today}.json`,
+                Body: JSON.stringify(logoutData),
+                ContentType: 'application/json'
+            }).promise();
+
+            console.log('Logout time stored successfully:', logoutTime);
+        }
+    } catch (error) {
+        console.error('Error storing logout time:', error);
+    }
+}
+
+function clearDailyTimes() {
+    const today = new Date().toISOString().split('T')[0];
+    const lastDate = localStorage.getItem('lastActiveDate');
+
+    if (lastDate !== today) {
+        localStorage.removeItem('firstAuxUpdateTime');
+        localStorage.removeItem('offlineTime');
+        localStorage.setItem('lastActiveDate', today);
+    }
+}
+
+function calculateTotalSteppingAwayTime(username) {
+    try {
+        // Get saved AUX data from localStorage
+        const auxData = JSON.parse(localStorage.getItem('auxData')) || [];
+
+        // Filter for Stepping Away entries for the current user and current date
+        const today = new Date().toISOString().split('T')[0];
+        const steppingAwayEntries = auxData.filter(entry =>
+                                                   entry.username === username &&
+                                                   entry.auxLabel.includes('Stepping Away') &&
+                                                   entry.date.includes(today)
+                                                  );
+
+        // Sum up all Stepping Away time
+        const totalTime = steppingAwayEntries.reduce((total, entry) => {
+            // Convert HH:MM:SS to milliseconds
+            if (typeof entry.timeSpent === 'string' && entry.timeSpent.includes(':')) {
+                const [hours, minutes, seconds] = entry.timeSpent.split(':').map(Number);
+                return total + ((hours * 3600 + minutes * 60 + seconds) * 1000);
+            }
+            // If timeSpent is already in milliseconds
+            return total + (parseInt(entry.timeSpent) || 0);
+        }, 0);
+
+        return totalTime;
+    } catch (error) {
+        console.error('Error calculating total stepping away time:', error);
+        return 0;
+    }
+}
+
+async function showDashboard() {
+    try {
+        // First load both SDKs
+        await loadAwsSdk();
+        await loadCognitoSdk();
+
+        const token = await AuthService.ensureAuthenticated();
+        if (!token) {
+            throw new Error('Authentication failed');
+        }
+
+        if (token) {
+            // Configure AWS with the token
+            await configureAWS(token);
+
+            // Only initialize dashboard after AWS is configured
+            await initializeDashboard();
+        }
+
+    } catch (error) {
+        console.error('Dashboard initialization error:', error);
+        showCustomAlert('Failed to initialize dashboard: ' + error.message);
+    }
+}
+
+
+async function startDashboardUpdates() {
+    try {
+        await updateDashboardData(true); // Initial update
+
+        // Use requestAnimationFrame for smooth updates
+        function updateLoop() {
+            if (document.getElementById('aux-dashboard')) {
+                updateDashboardTimers();
+                requestAnimationFrame(updateLoop);
+            }
+        }
+
+        requestAnimationFrame(updateLoop);
+
+        // Keep the interval for data refresh, but not for timer updates
+        dashboardUpdateInterval = setInterval(() => updateDashboardData(false), 30000);
+
+    } catch (error) {
+        console.error('Failed to start dashboard updates:', error);
+        showCustomAlert('Failed to initialize dashboard updates');
+    }
+}
+
+function stopDashboardUpdates() {
+    if (dashboardAnimationFrame) {
+        cancelAnimationFrame(dashboardAnimationFrame);
+        dashboardAnimationFrame = null;
+    }
+    if (dashboardUpdateInterval) {
+        clearInterval(dashboardUpdateInterval);
+        dashboardUpdateInterval = null;
+    }
+}
+
+// Helper function to update AWS credentials
+async function updateAWSCredentials(token) {
+    AWS.config.update({
+        region: 'eu-north-1',
+        credentials: new AWS.CognitoIdentityCredentials({
+            IdentityPoolId: 'eu-north-1:98c07095-e731-4219-bebe-db4dab892ea8',
+            Logins: {
+                'cognito-idp.eu-north-1.amazonaws.com/eu-north-1_V9kLPNVXl': token
+            }
+        })
+    });
+
+    // Wait for credentials to be refreshed
+    return new Promise((resolve, reject) => {
+        AWS.config.credentials.get(err => {
+            if (err) reject(err);
+            else resolve();
+        });
+    });
+}
+
+// Helper function to calculate user status
+function calculateUserStatus(lastUpdateTime, auxLabel, isPaused) {
+    // Add debugging
+    console.log('Calculating status for:', { lastUpdateTime, auxLabel, isPaused });
+
+    // If the AUX state is paused
+    if (isPaused) {
+        return 'paused';
+    }
+
+    // Convert auxLabel to lowercase for consistent comparison
+    auxLabel = (auxLabel || '').toLowerCase();
+
+    // Handle stepping away status
+    if (auxLabel.includes('stepping away')) {
+        return 'paused';
+    }
+
+    // Handle offline status
+    if (auxLabel.includes('offline')) {
+        return 'inactive';
+    }
+
+    // Handle undefined or missing AUX label
+    if (auxLabel.includes('undefined') || !auxLabel) {
+        return 'inactive';
+    }
+
+    // Handle break status
+    if (auxLabel.includes('on break')) {
+        return 'away';
+    }
+
+    // Default to active if no other conditions are met
+    return 'active';
+}
+
+async function initializeDashboard() {
+    try {
+        // Load required SDKs
+        await loadAwsSdk();
+        await loadCognitoSdk();
+
+        let dashboard = document.getElementById('aux-dashboard');
+        if (dashboard) {
+            stopDashboardUpdates();
+            dashboard.remove();
+            return;
+        }
+
+        // Create dashboard container
+        dashboard = document.createElement('div');
+        dashboard.id = 'aux-dashboard';
+
+        // Add dashboard styles
+        const styles = `
              /* Base Dashboard Container */
              #aux-dashboard {
                  position: fixed;
@@ -9320,10 +11109,9 @@
                                      <th>Current AUX</th>
                                      <th>Time</th>
                                      <th>Status</th>
-                                     <th>Last Update</th>
-                                     <th>Total Pause Time</th>
                                      <th>Login Time</th>
                                      <th>Logout Time</th>
+                                     <th>Export Time</th>
                                  </tr>
                              </thead>
                              <tbody id="dashboard-data"></tbody>
@@ -9400,101 +11188,101 @@
         return () => unsubscribe();
     }
 
-    function generateCSV(updates) {
-        const headers = ['Date', 'Username', 'Login Time', 'Paused Time', 'Logout Time', 'Total Time'];
-        const rows = updates.map(update => {
-            const date = new Date(update.loginTime).toLocaleDateString();
-            const loginTime = new Date(update.loginTime).toLocaleTimeString();
-            const logoutTime = update.logoutTime ? new Date(update.logoutTime).toLocaleTimeString() : 'Active';
-            const pausedTime = formatTime(update.totalPauseDuration || 0);
-            const totalTime = formatTime(
-                (update.logoutTime ? new Date(update.logoutTime) : new Date()) - new Date(update.loginTime) - (update.totalPauseDuration || 0)
-            );
-            return [date, update.username, loginTime, pausedTime, logoutTime, totalTime];
-        });
+function generateCSV(updates) {
+    const headers = ['Date', 'Username', 'Login Time', 'Paused Time', 'Logout Time', 'Total Time'];
+    const rows = updates.map(update => {
+        const date = new Date(update.loginTime).toLocaleDateString();
+        const loginTime = new Date(update.loginTime).toLocaleTimeString();
+        const logoutTime = update.logoutTime ? new Date(update.logoutTime).toLocaleTimeString() : 'Active';
+        const pausedTime = formatTime(update.totalPauseDuration || 0);
+        const totalTime = formatTime(
+            (update.logoutTime ? new Date(update.logoutTime) : new Date()) - new Date(update.loginTime) - (update.totalPauseDuration || 0)
+        );
+        return [date, update.username, loginTime, pausedTime, logoutTime, totalTime];
+    });
 
-        return [headers, ...rows].map(row => row.join(',')).join('\n');
+    return [headers, ...rows].map(row => row.join(',')).join('\n');
+}
+
+let isAuthenticationInProgress = false;
+
+async function sendAuxUpdate() {
+    if (isAuthenticationInProgress) {
+        console.log('Authentication already in progress');
+        return;
     }
-
-    let isAuthenticationInProgress = false;
-
-    async function sendAuxUpdate() {
-        if (isAuthenticationInProgress) {
-            console.log('Authentication already in progress');
+    try {
+        await loadAwsSdk();
+        await loadCognitoSdk();
+        isAuthenticationInProgress = true;
+        const currentState = JSON.parse(localStorage.getItem('auxState'));
+        console.log('Attempting to send AUX update:', currentState);
+        if (!currentState) {
+            console.log('No current AUX state to send');
             return;
         }
+
+        // Calculate total Stepping Away time
+        const totalSteppingAwayTime = parseInt(localStorage.getItem('totalSteppingAwayTime') || '0');
+        const currentSteppingAwayTime = currentState.auxLabel.includes('Stepping Away') ?
+              (new Date().getTime() - currentState.startTime) : 0;
+
+        let username = localStorage.getItem('lastAuthUsername');
+        let password = localStorage.getItem('lastAuthPassword');
+
+        // Only show auth modal if no stored credentials
+        if (!username || !password) {
+            console.log('No stored credentials, requesting authentication...');
+            const credentials = await showAuthModal();
+            if (!credentials) {
+                throw new Error('Authentication cancelled');
+            }
+            username = credentials.username;
+            password = credentials.password;
+            localStorage.setItem('lastAuthUsername', username);
+            localStorage.setItem('lastAuthPassword', password);
+        }
+
+        console.log('Authenticating with AWS...');
+        const token = await AuthService.ensureAuthenticated();
+        await configureAWS(token);
+
+        // Configure AWS with retries
+        await retryOperation(async () => {
+            AWS.config.update({
+                region: 'eu-north-1',
+                credentials: new AWS.CognitoIdentityCredentials({
+                    IdentityPoolId: 'eu-north-1:98c07095-e731-4219-bebe-db4dab892ea8',
+                    Logins: {
+                        'cognito-idp.eu-north-1.amazonaws.com/eu-north-1_V9kLPNVXl': token
+                    }
+                })
+            });
+
+            // Wait for credentials to refresh
+            return new Promise((resolve, reject) => {
+                AWS.config.credentials.get(err => {
+                    if (err) {
+                        console.error('Error getting AWS credentials:', err);
+                        reject(err);
+                    } else {
+                        console.log('AWS credentials successfully obtained');
+                        resolve();
+                    }
+                });
+            });
+        }, 3);
+
+        const s3 = new AWS.S3();
+        const today = new Date().toISOString().split('T')[0];
+        const initialLoginTime = localStorage.getItem('dailyLoginTime');
+
+        // Try to get existing data from AWS first
+        let existingData;
         try {
-            await loadAwsSdk();
-            await loadCognitoSdk();
-            isAuthenticationInProgress = true;
-            const currentState = JSON.parse(localStorage.getItem('auxState'));
-            console.log('Attempting to send AUX update:', currentState);
-            if (!currentState) {
-                console.log('No current AUX state to send');
-                return;
-            }
-
-            // Calculate total Stepping Away time
-            const totalSteppingAwayTime = parseInt(localStorage.getItem('totalSteppingAwayTime') || '0');
-            const currentSteppingAwayTime = currentState.auxLabel.includes('Stepping Away') ?
-                  (new Date().getTime() - currentState.startTime) : 0;
-
-            let username = localStorage.getItem('lastAuthUsername');
-            let password = localStorage.getItem('lastAuthPassword');
-
-            // Only show auth modal if no stored credentials
-            if (!username || !password) {
-                console.log('No stored credentials, requesting authentication...');
-                const credentials = await showAuthModal();
-                if (!credentials) {
-                    throw new Error('Authentication cancelled');
-                }
-                username = credentials.username;
-                password = credentials.password;
-                localStorage.setItem('lastAuthUsername', username);
-                localStorage.setItem('lastAuthPassword', password);
-            }
-
-            console.log('Authenticating with AWS...');
-            const token = await AuthService.ensureAuthenticated();
-            await configureAWS(token);
-
-            // Configure AWS with retries
-            await retryOperation(async () => {
-                AWS.config.update({
-                    region: 'eu-north-1',
-                    credentials: new AWS.CognitoIdentityCredentials({
-                        IdentityPoolId: 'eu-north-1:98c07095-e731-4219-bebe-db4dab892ea8',
-                        Logins: {
-                            'cognito-idp.eu-north-1.amazonaws.com/eu-north-1_V9kLPNVXl': token
-                        }
-                    })
-                });
-
-                // Wait for credentials to refresh
-                return new Promise((resolve, reject) => {
-                    AWS.config.credentials.get(err => {
-                        if (err) {
-                            console.error('Error getting AWS credentials:', err);
-                            reject(err);
-                        } else {
-                            console.log('AWS credentials successfully obtained');
-                            resolve();
-                        }
-                    });
-                });
-            }, 3);
-
-            const s3 = new AWS.S3();
-            const today = new Date().toISOString().split('T')[0];
-            const initialLoginTime = localStorage.getItem('dailyLoginTime');
-
-            // Try to get existing data from AWS first
-            let existingData;
-            try {
-                const response = await s3.getObject({
-                    Bucket: 'real-time-databucket',
-                    Key: `aux-realtime/${username}.json`
+            const response = await s3.getObject({
+                Bucket: 'real-time-databucket',
+                Key: `aux-realtime/${username}.json`
             }).promise();
                 existingData = JSON.parse(response.Body.toString());
                 console.log('Retrieved existing data:', existingData);
@@ -9607,298 +11395,342 @@
         }
     }
 
-    function validateAuxData(state) {
-        if (!state) return false;
-        const requiredFields = ['auxLabel', 'startTime'];
-        return requiredFields.every(field => state.hasOwnProperty(field) && state[field] !== null);
+function validateAuxData(state) {
+    if (!state) return false;
+    const requiredFields = ['auxLabel', 'startTime'];
+    return requiredFields.every(field => state.hasOwnProperty(field) && state[field] !== null);
+}
+
+const AuxUpdateEventSystem = {
+    listeners: new Set(),
+
+    emit(eventType, data) {
+        this.listeners.forEach(listener => listener(eventType, data));
+    },
+
+    subscribe(listener) {
+        this.listeners.add(listener);
+        return () => this.listeners.delete(listener);
     }
+};
 
-    const AuxUpdateEventSystem = {
-        listeners: new Set(),
+async function updateDashboardData(isImmediateUpdate = false) {
+    try {
+        console.log('Starting dashboard update...', isImmediateUpdate ? '(Immediate update)' : '');
 
-        emit(eventType, data) {
-            this.listeners.forEach(listener => listener(eventType, data));
-        },
+        // First, ensure AWS SDK is loaded
+        await loadAwsSdk();
 
-        subscribe(listener) {
-            this.listeners.add(listener);
-            return () => this.listeners.delete(listener);
+        const token = await AuthService.ensureAuthenticated();
+        if (!token) {
+            throw new Error('Authentication failed');
         }
-    };
+        await configureAWS(token);
 
-    async function updateDashboardData(isImmediateUpdate = false) {
-        try {
-            console.log('Starting dashboard update...', isImmediateUpdate ? '(Immediate update)' : '');
-
-            // First, ensure AWS SDK is loaded
-            await loadAwsSdk();
-
-            const token = await AuthService.ensureAuthenticated();
-            if (!token) {
-                throw new Error('Authentication failed');
-            }
-            await configureAWS(token);
-
-            // Configure AWS with the token
-            AWS.config.update({
-                region: 'eu-north-1',
-                credentials: new AWS.CognitoIdentityCredentials({
-                    IdentityPoolId: 'eu-north-1:98c07095-e731-4219-bebe-db4dab892ea8',
-                    Logins: {
-                        'cognito-idp.eu-north-1.amazonaws.com/eu-north-1_V9kLPNVXl': token
-                    }
-                })
-            });
-
-            // Wait for credentials to be initialized
-            await new Promise((resolve, reject) => {
-                AWS.config.credentials.get(err => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-
-            const s3 = new AWS.S3();
-            const currentUsername = localStorage.getItem("currentUsername");
-            const today = new Date().toISOString().split('T')[0];
-
-            // Get login times from AWS
-            const loginTimesPrefix = `login-times/${today}`;
-            const loginTimesResponse = await s3.listObjectsV2({
-                Bucket: 'real-time-databucket',
-                Prefix: loginTimesPrefix
-            }).promise();
-
-            const loginTimes = new Map();
-
-            // Process login times
-            for (const item of loginTimesResponse.Contents || []) {
-                try {
-                    const data = await s3.getObject({
-                        Bucket: 'real-time-databucket',
-                        Key: item.Key
-                    }).promise();
-
-                    const loginData = JSON.parse(data.Body.toString());
-                    loginTimes.set(loginData.username, loginData.loginTime);
-                } catch (error) {
-                    console.error('Error processing login time:', error);
+        // Configure AWS with the token
+        AWS.config.update({
+            region: 'eu-north-1',
+            credentials: new AWS.CognitoIdentityCredentials({
+                IdentityPoolId: 'eu-north-1:98c07095-e731-4219-bebe-db4dab892ea8',
+                Logins: {
+                    'cognito-idp.eu-north-1.amazonaws.com/eu-north-1_V9kLPNVXl': token
                 }
-            }
-
-            // First, try to get current user's data
-            try {
-                const currentUserKey = `aux-realtime/${currentUsername}.json`;
-                const currentUserData = await s3.getObject({
-                    Bucket: 'real-time-databucket',
-                    Key: currentUserKey
-                }).promise();
-
-                console.log('Current user data retrieved:', JSON.parse(currentUserData.Body.toString()));
-            } catch (error) {
-                console.log('No existing data for current user or error:', error);
-            }
-
-            // Get all updates
-            const response = await s3.listObjectsV2({
-                Bucket: 'real-time-databucket',
-                Prefix: 'aux-realtime/',
-                MaxKeys: 1000
-            }).promise();
-
-            console.log(`Found ${response.Contents.length} AUX updates`);
-
-            const currentTime = Date.now();
-
-            // Process all updates first
-            const updates = await Promise.all(response.Contents.map(async (item) => {
-                try {
-                    const data = await s3.getObject({
-                        Bucket: 'real-time-databucket',
-                        Key: item.Key
-                    }).promise();
-
-                    const userState = JSON.parse(data.Body.toString());
-                    const lastUpdateTime = new Date(userState.lastUpdate).getTime();
-                    const timeSinceUpdate = currentTime - lastUpdateTime;
-
-                    // Get login time from AWS, fallback to stored or current time
-                    const awsLoginTime = loginTimes.get(userState.username);
-                    const loginTime = userState.date === today ?
-                          (awsLoginTime || userState.loginTime || new Date().toISOString()) :
-                    userState.loginTime;
-
-                    let steppingAwayTime = 0;
-                    if (userState.auxLabel && userState.auxLabel.includes('Stepping Away')) {
-                        const auxStartTime = new Date(userState.startTime).getTime();
-                        const auxEndTime = userState.lastUpdate ? new Date(userState.lastUpdate).getTime() : currentTime;
-                        steppingAwayTime = auxEndTime - auxStartTime;
-                    }
-
-                    return {
-                        ...userState,
-                        fileKey: item.Key,
-                        lastModified: item.LastModified,
-                        timeSinceUpdate,
-                        steppingAwayTime: steppingAwayTime,
-                        loginTime: loginTime,
-                        status: calculateUserStatus(
-                            lastUpdateTime,
-                            userState.auxLabel,
-                            userState.isPaused
-                        )
-                    };
-                } catch (error) {
-                    console.error(`Error processing file ${item.Key}:`, error);
-                    return null;
-                }
-            }));
-
-            // Filter out nulls and sort updates
-            const validUpdates = updates
-            .filter(update => update !== null)
-            .map(update => {
-                console.log('Processing update:', update);
-                const status = calculateUserStatus(
-                    new Date(update.lastUpdate).getTime(),
-                    update.auxLabel,
-                    update.isPaused
-                );
-                return {
-                    ...update,
-                    status
-                };
             })
-            .sort((a, b) => {
-                if (a.username === currentUsername) return -1;
-                if (b.username === currentUsername) return 1;
-                return new Date(b.lastUpdate) - new Date(a.lastUpdate);
-            });
-
-            console.log('Processed updates:', validUpdates.length);
-
-            // Store the latest updates for CSV download
-            lastUpdates = validUpdates;
-
-            // Update UI with the processed data
-            updateDashboardUI(validUpdates);
-
-            // Add continuous timer updates
-            updateDashboardTimers();
-
-            console.log('Dashboard update completed');
-
-            // Broadcast update event
-            const updateEvent = new CustomEvent('dashboardUpdated', {
-                detail: {
-                    updateCount: validUpdates.length,
-                    timestamp: new Date().toISOString()
-                }
-            });
-            window.dispatchEvent(updateEvent);
-
-            // Start the continuous timer updates if dashboard is visible
-            if (document.getElementById('aux-dashboard')) {
-                if (dashboardAnimationFrame) {
-                    cancelAnimationFrame(dashboardAnimationFrame);
-                }
-                dashboardAnimationFrame = requestAnimationFrame(updateDashboardTimers);
-            }
-
-            return validUpdates;
-
-        } catch (error) {
-            console.error('Error updating dashboard:', error);
-            handleUpdateError(error);
-            throw error;
-        }
-    }
-
-    // Add continuous timer updates
-    function updateDashboardTimers() {
-        const timerCells = document.querySelectorAll('.dashboard-table td:nth-child(3)');
-        timerCells.forEach(cell => {
-            const row = cell.parentElement;
-            const username = row.getAttribute('data-username');
-            const auxState = JSON.parse(localStorage.getItem('auxState')) || {};
-
-            if (auxState && !auxState.isPaused && auxState.username === username) {
-                const startTime = auxState.startTime;
-                const totalPauseDuration = auxState.totalPauseDuration || 0;
-                const elapsedTime = Date.now() - startTime - totalPauseDuration;
-                cell.textContent = formatTime(elapsedTime);
-            }
         });
 
-        // Continue the animation frame if the dashboard is still open
-        if (document.getElementById('aux-dashboard')) {
-            dashboardAnimationFrame = requestAnimationFrame(updateDashboardTimers);
-        }
-    }
+        // Wait for credentials to be initialized
+        await new Promise((resolve, reject) => {
+            AWS.config.credentials.get(err => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
 
-    function handleUpdateError(error) {
-        if (error.code === 'CredentialsError' ||
-            error.message.includes('credentials') ||
-            error.message.includes('Authentication')) {
+        const s3 = new AWS.S3();
+        const currentUsername = localStorage.getItem("currentUsername");
+        const today = new Date().toISOString().split('T')[0];
 
-            console.log('Credentials error, requesting re-authentication...');
-            AuthService.clearAuth();
-            stopDashboardUpdates();
+        // Get login times from AWS
+        const loginTimesPrefix = `login-times/${today}`;
+        const loginTimesResponse = await s3.listObjectsV2({
+            Bucket: 'real-time-databucket',
+            Prefix: loginTimesPrefix
+        }).promise();
 
-            setTimeout(async () => {
-                try {
-                    const token = await AuthService.ensureAuthenticated();
-                    if (token) {
-                        await configureAWS(token);
-                        startDashboardUpdates();
-                    }
-                } catch (authError) {
-                    console.error('Re-authentication failed:', authError);
-                    showCustomAlert('Authentication failed. Please try again.');
-                }
-            }, 0);
-        } else {
-            showCustomAlert('Error updating dashboard: ' + error.message);
-        }
-    }
+        const loginTimes = new Map();
 
-    async function sendAuxUpdateWithRetry(maxRetries = 3, baseDelay = 1000) {
-        let attempt = 0;
-        while (attempt < maxRetries) {
+        // Process login times
+        for (const item of loginTimesResponse.Contents || []) {
             try {
-                await sendAuxUpdate();
-                console.log('AUX update sent successfully on attempt', attempt + 1);
-                return;
+                const data = await s3.getObject({
+                    Bucket: 'real-time-databucket',
+                    Key: item.Key
+                }).promise();
+
+                const loginData = JSON.parse(data.Body.toString());
+                loginTimes.set(loginData.username, loginData.loginTime);
             } catch (error) {
-                attempt++;
-                if (attempt === maxRetries) throw error;
-                const delay = baseDelay * Math.pow(2, attempt);
-                console.log(`Retry attempt ${attempt} failed, waiting ${delay}ms before next attempt`);
-                await new Promise(resolve => setTimeout(resolve, delay));
+                console.error('Error processing login time:', error);
             }
         }
+
+        // First, try to get current user's data
+        try {
+            const currentUserKey = `aux-realtime/${currentUsername}.json`;
+            const currentUserData = await s3.getObject({
+                Bucket: 'real-time-databucket',
+                Key: currentUserKey
+            }).promise();
+
+            console.log('Current user data retrieved:', JSON.parse(currentUserData.Body.toString()));
+        } catch (error) {
+            console.log('No existing data for current user or error:', error);
+        }
+
+        // Get all updates
+        const response = await s3.listObjectsV2({
+            Bucket: 'real-time-databucket',
+            Prefix: 'aux-realtime/',
+            MaxKeys: 1000
+        }).promise();
+
+        console.log(`Found ${response.Contents.length} AUX updates`);
+
+        const currentTime = Date.now();
+
+        // Process all updates first
+        const updates = await Promise.all(response.Contents.map(async (item) => {
+            try {
+                const data = await s3.getObject({
+                    Bucket: 'real-time-databucket',
+                    Key: item.Key
+                }).promise();
+
+                const userState = JSON.parse(data.Body.toString());
+                const lastUpdateTime = new Date(userState.lastUpdate).getTime();
+                const timeSinceUpdate = currentTime - lastUpdateTime;
+
+                // Get login time from AWS, fallback to stored or current time
+                const awsLoginTime = loginTimes.get(userState.username);
+                const loginTime = userState.date === today ?
+                      (awsLoginTime || userState.loginTime || new Date().toISOString()) :
+                userState.loginTime;
+
+                // Get export time if available
+                let exportTime = null;
+                try {
+                    // First try to get from unique-ids (for new exports)
+                    const uniqueIdKey = `unique-ids/${userState.username}/${today}.json`;
+                    try {
+                        const uniqueIdData = await s3.getObject({
+                            Bucket: 'real-time-databucket',
+                            Key: uniqueIdKey
+                        }).promise();
+                        const uniqueIdInfo = JSON.parse(uniqueIdData.Body.toString());
+                        if (uniqueIdInfo.status === 'verified' || uniqueIdInfo.status === 'used') {
+                            exportTime = uniqueIdInfo.verifiedAt || uniqueIdInfo.usedAt;
+                        }
+                    } catch (uniqueIdError) {
+                        // If no unique ID data, try export-logs
+                        const exportLogKey = `export-logs/${userState.username}/${today}.json`;
+                        try {
+                            const exportLogData = await s3.getObject({
+                                Bucket: 'real-time-databucket',
+                                Key: exportLogKey
+                            }).promise();
+                            const exportLogInfo = JSON.parse(exportLogData.Body.toString());
+                            if (exportLogInfo.status === true) {
+                                exportTime = exportLogInfo.timestamp;
+                            }
+                        } catch (exportLogError) {
+                            // Check in aux-data-bucket for older exports
+                            const auxDataKey = `aux_data_${userState.username}_${today}`;
+                            try {
+                                const response = await s3.listObjectsV2({
+                                    Bucket: 'aux-data-bucket',
+                                    Prefix: auxDataKey
+                                }).promise();
+
+                                if (response.Contents && response.Contents.length > 0) {
+                                    // Get the most recent export
+                                    const mostRecent = response.Contents.sort((a, b) =>
+                                                                              b.LastModified - a.LastModified
+                                                                             )[0];
+                                    exportTime = mostRecent.LastModified;
+                                }
+                            } catch (auxDataError) {
+                                // No export found in aux-data-bucket either
+                                console.log('No export found in any location for:', userState.username);
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.log('Error checking export status:', error);
+                }
+                return {
+                    ...userState,
+                    fileKey: item.Key,
+                    lastModified: item.LastModified,
+                    timeSinceUpdate,
+                    loginTime: loginTime,
+                    exportTime: exportTime,
+                    status: calculateUserStatus(
+                        lastUpdateTime,
+                        userState.auxLabel,
+                        userState.isPaused
+                    )
+                };
+            } catch (error) {
+                console.error(`Error processing file ${item.Key}:`, error);
+                return null;
+            }
+        }));
+
+        // Filter out nulls and sort updates
+        const validUpdates = updates
+        .filter(update => update !== null)
+        .map(update => {
+            console.log('Processing update:', update);
+            const status = calculateUserStatus(
+                new Date(update.lastUpdate).getTime(),
+                update.auxLabel,
+                update.isPaused
+            );
+            return {
+                ...update,
+                status
+            };
+        })
+        .sort((a, b) => {
+            if (a.username === currentUsername) return -1;
+            if (b.username === currentUsername) return 1;
+            return new Date(b.lastUpdate) - new Date(a.lastUpdate);
+        });
+
+        console.log('Processed updates:', validUpdates.length);
+
+        // Store the latest updates for CSV download
+        lastUpdates = validUpdates;
+
+        // Update UI with the processed data
+        updateDashboardUI(validUpdates);
+
+        // Add continuous timer updates
+        updateDashboardTimers();
+
+        console.log('Dashboard update completed');
+
+        // Broadcast update event
+        const updateEvent = new CustomEvent('dashboardUpdated', {
+            detail: {
+                updateCount: validUpdates.length,
+                timestamp: new Date().toISOString()
+            }
+        });
+        window.dispatchEvent(updateEvent);
+
+        // Start the continuous timer updates if dashboard is visible
+        if (document.getElementById('aux-dashboard')) {
+            if (dashboardAnimationFrame) {
+                cancelAnimationFrame(dashboardAnimationFrame);
+            }
+            dashboardAnimationFrame = requestAnimationFrame(updateDashboardTimers);
+        }
+
+        return validUpdates;
+
+    } catch (error) {
+        console.error('Error updating dashboard:', error);
+        handleUpdateError(error);
+        throw error;
+    }
+}
+
+// Add continuous timer updates
+function updateDashboardTimers() {
+    const timerCells = document.querySelectorAll('.dashboard-table td:nth-child(3)');
+    timerCells.forEach(cell => {
+        const row = cell.parentElement;
+        const username = row.getAttribute('data-username');
+        const auxState = JSON.parse(localStorage.getItem('auxState')) || {};
+
+        if (auxState && !auxState.isPaused && auxState.username === username) {
+            const startTime = auxState.startTime;
+            const totalPauseDuration = auxState.totalPauseDuration || 0;
+            const elapsedTime = Date.now() - startTime - totalPauseDuration;
+            cell.textContent = formatTime(elapsedTime);
+        }
+    });
+
+    // Continue the animation frame if the dashboard is still open
+    if (document.getElementById('aux-dashboard')) {
+        dashboardAnimationFrame = requestAnimationFrame(updateDashboardTimers);
+    }
+}
+
+function handleUpdateError(error) {
+    if (error.code === 'CredentialsError' ||
+        error.message.includes('credentials') ||
+        error.message.includes('Authentication')) {
+
+        console.log('Credentials error, requesting re-authentication...');
+        AuthService.clearAuth();
+        stopDashboardUpdates();
+
+        setTimeout(async () => {
+            try {
+                const token = await AuthService.ensureAuthenticated();
+                if (token) {
+                    await configureAWS(token);
+                    startDashboardUpdates();
+                }
+            } catch (authError) {
+                console.error('Re-authentication failed:', authError);
+                showCustomAlert('Authentication failed. Please try again.');
+            }
+        }, 0);
+    } else {
+        showCustomAlert('Error updating dashboard: ' + error.message);
+    }
+}
+
+async function sendAuxUpdateWithRetry(maxRetries = 3, baseDelay = 1000) {
+    let attempt = 0;
+    while (attempt < maxRetries) {
+        try {
+            await sendAuxUpdate();
+            console.log('AUX update sent successfully on attempt', attempt + 1);
+            return;
+        } catch (error) {
+            attempt++;
+            if (attempt === maxRetries) throw error;
+            const delay = baseDelay * Math.pow(2, attempt);
+            console.log(`Retry attempt ${attempt} failed, waiting ${delay}ms before next attempt`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+    }
+}
+
+function updateDashboardUI(updates) {
+    const currentUsername = localStorage.getItem("currentUsername");
+    const tbody = document.getElementById('dashboard-data');
+    if (!tbody) {
+        console.error('Dashboard table body not found');
+        return;
     }
 
-    function updateDashboardUI(updates) {
-        const currentUsername = localStorage.getItem("currentUsername");
-        const tbody = document.getElementById('dashboard-data');
-        if (!tbody) {
-            console.error('Dashboard table body not found');
-            return;
-        }
+    // Clear existing timers
+    if (window.dashboardTimers) {
+        window.dashboardTimers.forEach(timer => clearInterval(timer));
+    }
+    window.dashboardTimers = [];
 
-        // Clear existing timers
-        if (window.dashboardTimers) {
-            window.dashboardTimers.forEach(timer => clearInterval(timer));
-        }
-        window.dashboardTimers = [];
+    // Clear existing content
+    tbody.innerHTML = '';
 
-        // Clear existing content
-        tbody.innerHTML = '';
-
-        // Add pause pulse animation
-        const style = document.createElement('style');
-        style.textContent = `
+    // Add pause pulse animation
+    const style = document.createElement('style');
+    style.textContent = `
                      @keyframes pausePulse {
                          0% { background-color: rgba(255, 165, 0, 0.05); }
                          50% { background-color: rgba(255, 165, 0, 0.1); }
@@ -9976,58 +11808,194 @@
                 statusCell.style.fontWeight = 'bold';
             }
 
-            // Last Update cell
-            const lastUpdateCell = row.insertCell();
-            lastUpdateCell.textContent = new Date(update.lastUpdate).toLocaleTimeString();
-
-
-            // Calculate and display total pause duration
-            const pauseTimeCell = row.insertCell();
-            let totalPauseTime = 0;
-
-            // Add historical Stepping Away time from saved data
-            if (update.username) {
-                totalPauseTime += calculateTotalSteppingAwayTime(update.username);
-            }
-
-            // Add current Stepping Away session time if applicable
-            if (update.auxLabel && update.auxLabel.includes('Stepping Away')) {
-                const currentSessionTime = Date.now() - new Date(update.startTime).getTime();
-                totalPauseTime += currentSessionTime;
-            }
-
-            // Add any additional pause time from the update
-            if (update.totalSteppingAwayTime) {
-                totalPauseTime += update.totalSteppingAwayTime;
-            }
-
-            pauseTimeCell.textContent = formatTime(totalPauseTime);
-
-            // Add cells for login time
+            // Login time cell with enhanced handling
             const loginTimeCell = row.insertCell();
-            console.log('Username:', update.username);
-            console.log('Current username:', currentUsername);
-            console.log('Stored login time:', localStorage.getItem('dailyLoginTime'));
+            const processLoginTime = async () => {
+                try {
+                    const today = new Date().toISOString().split('T')[0];
+                    // Check if update.date matches today's date
+                    const updateDate = new Date(update.date).toISOString().split('T')[0];
 
-            if (update.username === currentUsername) {
-                const initialLoginTime = localStorage.getItem('dailyLoginTime');
-                console.log('Initial login time for current user:', initialLoginTime);
-                loginTimeCell.textContent = initialLoginTime ?
-                    new Date(initialLoginTime).toLocaleTimeString() :
-                'No login time';
+                    let loginTime = update.loginTime;
+
+                    // Only process login time if the update is from today
+                    if (updateDate === today) {
+                        // If login time is invalid or missing, try to fetch from backend
+                        if (!loginTime || loginTime === 'Invalid Date' || loginTime === 'N/A') {
+                            const s3 = new AWS.S3();
+                            try {
+                                const response = await s3.getObject({
+                                    Bucket: 'real-time-databucket',
+                                    Key: `login-times/${update.username}_${today}.json`
+                    }).promise();
+                                const data = JSON.parse(response.Body.toString());
+                                loginTime = data.loginTime;
+                            } catch (error) {
+                                console.log(`No stored login time found for today (${today}):`, error);
+                            }
+                        }
+
+                        if (loginTime && loginTime !== 'N/A') {
+                            // Handle ISO format
+                            if (loginTime.includes('T')) {
+                                loginTime = new Date(loginTime).toLocaleTimeString('en-US', {
+                                    hour: 'numeric',
+                                    minute: '2-digit',
+                                    second: '2-digit',
+                                    hour12: true
+                                });
+                            }
+                            // Handle already formatted time
+                            else if (loginTime.match(/^\d{1,2}:\d{2}:\d{2}\s?(?:AM|PM)?$/i)) {
+                                const [hours, minutes, seconds] = loginTime.split(':')
+                                .map(num => num.replace(/[^\d]/g, ''));
+                                const date = new Date();
+                                date.setHours(hours, minutes, seconds);
+                                loginTime = date.toLocaleTimeString('en-US', {
+                                    hour: 'numeric',
+                                    minute: '2-digit',
+                                    second: '2-digit',
+                                    hour12: true
+                                });
+                            }
+                            loginTimeCell.textContent = loginTime;
+                            loginTimeCell.style.color = '#4CAF50'; // Green color for valid login time
+                        } else {
+                            loginTimeCell.textContent = 'N/A';
+                            loginTimeCell.style.color = '#FF9800'; // Orange color for N/A
+                        }
+                    } else {
+                        // For non-today dates, display 'N/A'
+                        loginTimeCell.textContent = 'N/A';
+                        loginTimeCell.style.color = '#FF9800'; // Orange color for N/A
+                    }
+
+                    // Add tooltip showing the date if it's not today
+                    if (updateDate !== today) {
+                        loginTimeCell.title = `Data from: ${new Date(update.date).toLocaleDateString()}`;
+                    }
+
+                } catch (error) {
+                    console.error('Error processing login time:', error);
+                    loginTimeCell.textContent = 'N/A';
+                    loginTimeCell.style.color = '#FF5722'; // Red color for error
+                }
+            };
+
+            processLoginTime();
+
+            // Add logout time with enhanced handling
+            const logoutTimeCell = row.insertCell();
+            const processLogoutTime = async () => {
+                try {
+                    let logoutTime = null;
+                    const today = new Date().toISOString().split('T')[0];
+
+                    // For current user, first check localStorage
+                    if (update.username === currentUsername) {
+                        logoutTime = localStorage.getItem('dailyLogoutTime');
+                    }
+
+                    // If no logout time found in localStorage or not current user, check backend
+                    if (!logoutTime || logoutTime === 'Invalid Date') {
+                        const s3 = new AWS.S3();
+                        try {
+                            const response = await s3.getObject({
+                                Bucket: 'real-time-databucket',
+                                Key: `logout-times/${update.username}_${today}.json`
+                }).promise();
+                            const data = JSON.parse(response.Body.toString());
+                            logoutTime = data.logoutTime;
+                        } catch (error) {
+                            console.log('No stored logout time found:', error);
+                        }
+                    }
+
+                    // If user is currently offline, use update.logoutTime
+                    if (!logoutTime && update.logoutTime) {
+                        logoutTime = update.logoutTime;
+                    }
+
+                    if (logoutTime) {
+                        try {
+                            // Handle ISO format
+                            if (logoutTime.includes('T')) {
+                                logoutTime = new Date(logoutTime).toLocaleTimeString('en-US', {
+                                    hour: 'numeric',
+                                    minute: '2-digit',
+                                    second: '2-digit',
+                                    hour12: true
+                                });
+                            }
+                            // Handle already formatted time
+                            else if (logoutTime.match(/^\d{1,2}:\d{2}:\d{2}\s?(?:AM|PM)?$/i)) {
+                                const [hours, minutes, seconds] = logoutTime.split(':')
+                                .map(num => num.replace(/[^\d]/g, ''));
+                                const date = new Date();
+                                date.setHours(hours, minutes, seconds);
+                                logoutTime = date.toLocaleTimeString('en-US', {
+                                    hour: 'numeric',
+                                    minute: '2-digit',
+                                    second: '2-digit',
+                                    hour12: true
+                                });
+                            }
+
+                            // Check if user is offline
+                            if (update.auxLabel && update.auxLabel.toLowerCase().includes('offline')) {
+                                logoutTimeCell.textContent = logoutTime;
+                                logoutTimeCell.style.color = '#FF5722'; // Red color for offline status
+                            } else {
+                                logoutTimeCell.textContent = 'Active';
+                                logoutTimeCell.style.color = '#4CAF50'; // Green color for active status
+                            }
+                        } catch (error) {
+                            console.error('Error formatting logout time:', error);
+                            logoutTimeCell.textContent = 'N/A';
+                        }
+                    } else {
+                        // If no logout time found and user is not offline, show as Active
+                        if (!update.auxLabel || !update.auxLabel.toLowerCase().includes('offline')) {
+                            logoutTimeCell.textContent = 'Active';
+                            logoutTimeCell.style.color = '#4CAF50';
+                        } else {
+                            // If user is offline but no logout time found
+                            logoutTimeCell.textContent = 'N/A';
+                            logoutTimeCell.style.color = '#FF5722';
+                        }
+                    }
+
+                    // Add tooltip with full timestamp if available
+                    if (logoutTime && logoutTime !== 'Active' && logoutTime !== 'N/A') {
+                        logoutTimeCell.title = `Logged out at: ${logoutTime}`;
+                    }
+
+                } catch (error) {
+                    console.error('Error processing logout time:', error);
+                    logoutTimeCell.textContent = 'Error';
+                    logoutTimeCell.style.color = '#FF5722';
+                }
+            };
+
+            processLogoutTime();
+
+            // Export time cell
+            const exportTimeCell = row.insertCell();
+            if (update.exportTime) {
+                const exportDate = new Date(update.exportTime);
+                exportTimeCell.textContent = exportDate.toLocaleTimeString('en-US', {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: true
+                });
+                exportTimeCell.title = exportDate.toLocaleString(); // Add full date/time as tooltip
+                exportTimeCell.style.color = '#4CAF50'; // Green color for exported status
             } else {
-                console.log('Login time from update:', update.loginTime);
-                loginTimeCell.textContent = update.loginTime ?
-                    new Date(update.loginTime).toLocaleTimeString() :
-                'No login time';
+                exportTimeCell.textContent = 'Not exported';
+                exportTimeCell.style.color = '#FF5722'; // Orange/red color for not exported status
             }
 
-            // Add logout time if exists
-            const logoutTimeCell = row.insertCell();
-            const storedLogoutTime = localStorage.getItem('dailyLogoutTime');
-            logoutTimeCell.textContent = storedLogoutTime ?
-                new Date(storedLogoutTime).toLocaleTimeString() :
-            (update.logoutTime ? new Date(update.logoutTime).toLocaleTimeString() : 'Active');
 
             // Visual indicators for paused state
             if (update.isPaused) {
@@ -10044,12 +12012,6 @@
                 }
             }
 
-            // Enhanced hover information
-            row.title = `Last Updated: ${new Date(update.lastUpdate).toLocaleString()}
-             Total Pause Duration: ${formatTime(totalPauseTime)}
-             Status: ${status.charAt(0).toUpperCase() + status.slice(1)}
-             ${update.isPaused ? `Paused Since: ${new Date(update.pauseTime).toLocaleString()}` : ''}`;
-
             // Add click handler for detailed view
             row.style.cursor = 'pointer';
             row.addEventListener('click', () => {
@@ -10061,18 +12023,18 @@
         console.log('Current timers:', window.dashboardTimers.length);
     }
 
-    function resetDailySteppingAwayTime() {
-        const today = new Date().toISOString().split('T')[0];
-        const lastResetDate = localStorage.getItem('lastSteppingAwayResetDate');
+function resetDailySteppingAwayTime() {
+    const today = new Date().toISOString().split('T')[0];
+    const lastResetDate = localStorage.getItem('lastSteppingAwayResetDate');
 
-        if (lastResetDate !== today) {
-            localStorage.setItem('totalSteppingAwayTime', '0');
-            localStorage.setItem('lastSteppingAwayResetDate', today);
-        }
+    if (lastResetDate !== today) {
+        localStorage.setItem('totalSteppingAwayTime', '0');
+        localStorage.setItem('lastSteppingAwayResetDate', today);
     }
+}
 
-    function showDetailedView(update) {
-        showCustomAlert(`
+function showDetailedView(update) {
+    showCustomAlert(`
                      Username: ${update.username}
                      AUX: ${update.auxLabel}
                      Status: ${update.isPaused ? 'Paused' : 'Active'}
@@ -10083,56 +12045,56 @@
                  `);
     }
 
-    // New helper function to determine which level to display
-    function determineAuxLevel(auxLabel) {
-        if (!auxLabel) return '';
+// New helper function to determine which level to display
+function determineAuxLevel(auxLabel) {
+    if (!auxLabel) return '';
 
-        // Split the label by hyphens and trim each part
-        const parts = auxLabel.split('-').map(part => part.trim());
+    // Split the label by hyphens and trim each part
+    const parts = auxLabel.split('-').map(part => part.trim());
 
-        // If first part is "Microsite Project Work", show the complete label
-        if (parts[0] === 'Microsite Project Work') {
-            return auxLabel;
-        }
-
-        // For other cases, find the last non-N/A part
-        for (let i = parts.length - 1; i >= 0; i--) {
-            if (!parts[i].includes('N/A')) {
-                return parts[i];
-            }
-        }
-
-        return auxLabel; // Return original label if no valid parts found
+    // If first part is "Microsite Project Work", show the complete label
+    if (parts[0] === 'Microsite Project Work') {
+        return auxLabel;
     }
 
-
-    function updateTimerDashboard(cell, update) {
-        if (update.isPaused) {
-            const pausedDuration = update.pauseTime - update.startTime - (update.totalPauseDuration || 0);
-            cell.textContent = formatTime(pausedDuration);
-        } else {
-            const currentDuration = Date.now() - update.startTime - (update.totalPauseDuration || 0);
-            cell.textContent = formatTime(currentDuration);
+    // For other cases, find the last non-N/A part
+    for (let i = parts.length - 1; i >= 0; i--) {
+        if (!parts[i].includes('N/A')) {
+            return parts[i];
         }
     }
 
-    // Updated status cell helper function
-    function updateStatusCell(cell, status) {
-        const statusColors = {
-            'active': '#4CAF50',
-            'away': '#FFC107',
-            'paused': '#FFA500',
-            'inactive': '#F44336'
-        };
+    return auxLabel; // Return original label if no valid parts found
+}
 
-        const statusIcon = {
-            'active': '🟢',
-            'away': '🟡',
-            'paused': '⏸️',
-            'inactive': '🔴'
-        };
 
-        cell.innerHTML = `
+function updateTimerDashboard(cell, update) {
+    if (update.isPaused) {
+        const pausedDuration = update.pauseTime - update.startTime - (update.totalPauseDuration || 0);
+        cell.textContent = formatTime(pausedDuration);
+    } else {
+        const currentDuration = Date.now() - update.startTime - (update.totalPauseDuration || 0);
+        cell.textContent = formatTime(currentDuration);
+    }
+}
+
+// Updated status cell helper function
+function updateStatusCell(cell, status) {
+    const statusColors = {
+        'active': '#4CAF50',
+        'away': '#FFC107',
+        'paused': '#FFA500',
+        'inactive': '#F44336'
+    };
+
+    const statusIcon = {
+        'active': '🟢',
+        'away': '🟡',
+        'paused': '⏸️',
+        'inactive': '🔴'
+    };
+
+    cell.innerHTML = `
                      <span class="status-indicator status-${status}"
                            style="background-color: ${statusColors[status]}">
                      </span>
@@ -10140,218 +12102,1335 @@
                  `;
     }
 
-    function filterDashboard() {
-        const searchInput = document.querySelector('.search-input');
-        const statusFilter = document.querySelector('.status-filter');
-        currentSearchTerm = searchInput.value.toLowerCase();
-        currentFilter = statusFilter.value.toLowerCase();
+function filterDashboard() {
+    const searchInput = document.querySelector('.search-input');
+    const statusFilter = document.querySelector('.status-filter');
+    currentSearchTerm = searchInput.value.toLowerCase();
+    currentFilter = statusFilter.value.toLowerCase();
 
-        const rows = document.querySelectorAll('#dashboard-data tr');
-        rows.forEach(row => {
-            const username = row.getAttribute('data-username').toLowerCase();
-            const status = row.getAttribute('data-status').toLowerCase();
+    const rows = document.querySelectorAll('#dashboard-data tr');
+    rows.forEach(row => {
+        const username = row.getAttribute('data-username').toLowerCase();
+        const status = row.getAttribute('data-status').toLowerCase();
 
-            const matchesSearch = username.includes(currentSearchTerm);
-            const matchesStatus = currentFilter === 'all' || status === currentFilter;
+        const matchesSearch = username.includes(currentSearchTerm);
+        const matchesStatus = currentFilter === 'all' || status === currentFilter;
 
-            row.style.display = matchesSearch && matchesStatus ? '' : 'none';
-        });
-    }
-
-
-    async function retryOperation(operation, maxRetries = 3, baseDelay = 1000) {
-        let lastError;
-        for (let i = 0; i < maxRetries; i++) {
-            try {
-                return await operation();
-            } catch (error) {
-                console.log(`Attempt ${i + 1} failed:`, error);
-                lastError = error;
-                if (i < maxRetries - 1) {
-                    const delay = baseDelay * Math.pow(2, i);
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                }
-            }
-        }
-        throw lastError;
-    }
-
-    window.addEventListener('auxStateUpdate', (event) => {
-        const { type, data } = event.detail;
-        if (type === 'update') {
-            // Update any UI elements that depend on AUX state
-            const pauseButton = document.getElementById('pause-button');
-            if (pauseButton) {
-                pauseButton.textContent = data.isPaused ? 'Resume' : 'Pause';
-                pauseButton.style.backgroundColor = data.isPaused ? '#FFA500' : '#4CAF50';
-            }
-
-            // Update timer display
-            const timerElement = document.getElementById('aux-timer');
-            if (timerElement) {
-                timerElement.style.opacity = data.isPaused ? '0.5' : '1';
-            }
-
-            // Update status indicator if it exists
-            const statusIndicator = document.querySelector('.status-indicator');
-            if (statusIndicator) {
-                statusIndicator.style.backgroundColor = data.isPaused ? '#FFA500' : '#4CAF50';
-            }
-        }
+        row.style.display = matchesSearch && matchesStatus ? '' : 'none';
     });
+}
 
-    window.addEventListener('auxStateChange', (event) => {
-        const data = event.detail;
 
-        // Update pause button if exists
+async function retryOperation(operation, maxRetries = 3, baseDelay = 1000) {
+    let lastError;
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await operation();
+        } catch (error) {
+            console.log(`Attempt ${i + 1} failed:`, error);
+            lastError = error;
+            if (i < maxRetries - 1) {
+                const delay = baseDelay * Math.pow(2, i);
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+    }
+    throw lastError;
+}
+
+window.addEventListener('auxStateUpdate', (event) => {
+    const { type, data } = event.detail;
+    if (type === 'update') {
+        // Update any UI elements that depend on AUX state
         const pauseButton = document.getElementById('pause-button');
         if (pauseButton) {
             pauseButton.textContent = data.isPaused ? 'Resume' : 'Pause';
             pauseButton.style.backgroundColor = data.isPaused ? '#FFA500' : '#4CAF50';
         }
 
-        // Update status indicator if exists
-        const statusIndicator = document.querySelector('.pause-status-indicator');
+        // Update timer display
+        const timerElement = document.getElementById('aux-timer');
+        if (timerElement) {
+            timerElement.style.opacity = data.isPaused ? '0.5' : '1';
+        }
+
+        // Update status indicator if it exists
+        const statusIndicator = document.querySelector('.status-indicator');
         if (statusIndicator) {
             statusIndicator.style.backgroundColor = data.isPaused ? '#FFA500' : '#4CAF50';
-            statusIndicator.style.boxShadow = `0 0 5px ${data.isPaused ? '#FFA500' : '#4CAF50'}`;
-        }
-
-        // Update dashboard if open
-        if (document.getElementById('aux-dashboard')) {
-            updateDashboardData(true);
-        }
-    });
-
-    window.addEventListener('online', () => {
-        console.log('Connection restored, restarting dashboard updates...');
-        if (document.getElementById('aux-dashboard')) {
-            startDashboardUpdates();
-        }
-    });
-
-    window.addEventListener('offline', () => {
-        console.log('Connection lost, stopping dashboard updates...');
-        stopDashboardUpdates();
-        if (document.getElementById('aux-dashboard')) {
-            showCustomAlert('Connection lost. Dashboard updates paused.');
-        }
-    });
-
-    window.addEventListener('unhandledrejection', event => {
-        console.error('Unhandled promise rejection:', event.reason);
-        if (event.reason.code === 'CredentialsError') {
-            handleUpdateError(event.reason);
-        }
-    });
-
-    document.getElementById('dashboardButton').addEventListener('click', async () => {
-        try {
-            await loadCognitoSDK();
-            await showDashboard();
-        } catch (error) {
-            console.error('Dashboard access error:', error);
-            showCustomAlert('Failed to load dashboard. Please try again.');
-        }
-    });
-
-    ///////////////////////////////////////////
-    //Timer Functions//
-    function cleanupTimer() {
-        if (animationFrameId) {
-            cancelAnimationFrame(animationFrameId);
-            animationFrameId = null;
         }
     }
+});
 
-    function validateTimeFormat(timeString) {
-        if (!timeString) return false;
-        const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/;
-        return timeRegex.test(timeString);
+window.addEventListener('auxStateChange', (event) => {
+    const data = event.detail;
+
+    // Update pause button if exists
+    const pauseButton = document.getElementById('pause-button');
+    if (pauseButton) {
+        pauseButton.textContent = data.isPaused ? 'Resume' : 'Pause';
+        pauseButton.style.backgroundColor = data.isPaused ? '#FFA500' : '#4CAF50';
     }
 
-    function parseTime(timeString) {
-        if (typeof timeString === 'number') {
-            return timeString;
-        }
-
-        if (typeof timeString === 'string') {
-            timeString = timeString.replace(/\s*(AM|PM)/i, '').trim();
-
-            if (timeString.includes(':')) {
-                const [hours, minutes, seconds] = timeString.split(':').map(Number);
-                return ((hours * 3600) + (minutes * 60) + seconds) * 1000;
-            }
-        }
-
-        return parseInt(timeString, 10);
+    // Update status indicator if exists
+    const statusIndicator = document.querySelector('.pause-status-indicator');
+    if (statusIndicator) {
+        statusIndicator.style.backgroundColor = data.isPaused ? '#FFA500' : '#4CAF50';
+        statusIndicator.style.boxShadow = `0 0 5px ${data.isPaused ? '#FFA500' : '#4CAF50'}`;
     }
 
-    function formatTime(ms) {
-        // If input is a string in HH:MM:SS format, convert to milliseconds
-        if (typeof ms === 'string' && ms.includes(':')) {
-            const [hours, minutes, seconds] = ms.split(':').map(Number);
-            ms = ((hours * 3600 + minutes * 60 + seconds) * 1000);
-        }
-
-        // Ensure ms is a number
-        ms = Number(ms);
-
-        const totalSeconds = Math.floor(ms / 1000);
-        const hours = Math.floor(totalSeconds / 3600);
-        const minutes = Math.floor((totalSeconds % 3600) / 60);
-        const seconds = totalSeconds % 60;
-
-        return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    // Update dashboard if open
+    if (document.getElementById('aux-dashboard')) {
+        updateDashboardData(true);
     }
+});
 
+window.addEventListener('online', () => {
+    console.log('Connection restored, restarting dashboard updates...');
+    if (document.getElementById('aux-dashboard')) {
+        startDashboardUpdates();
+    }
+});
 
-    function getLocalTimeString(date) {
-        return date.toLocaleTimeString('en-US', {
-            hour12: false,
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
+window.addEventListener('offline', () => {
+    console.log('Connection lost, stopping dashboard updates...');
+    stopDashboardUpdates();
+    if (document.getElementById('aux-dashboard')) {
+        showCustomAlert('Connection lost. Dashboard updates paused.');
+    }
+});
+
+window.addEventListener('unhandledrejection', event => {
+    console.error('Unhandled promise rejection:', event.reason);
+    if (event.reason.code === 'CredentialsError') {
+        handleUpdateError(event.reason);
+    }
+});
+
+document.getElementById('dashboardButton').addEventListener('click', async () => {
+    try {
+        await loadCognitoSDK();
+        await showDashboard();
+    } catch (error) {
+        console.error('Dashboard access error:', error);
+        showCustomAlert('Failed to load dashboard. Please try again.');
+    }
+});
+
+///////////////////////////////////////
+//Flash Data Dashboard
+// Add Chart.js library
+function loadChartJS(callback) {
+    const chartScript = document.createElement('script');
+    chartScript.src = 'https://cdn.jsdelivr.net/npm/chart.js';
+    chartScript.onload = () => {
+        console.log('Chart.js loaded successfully');
+        callback();
+    };
+    chartScript.onerror = () => {
+        console.error('Failed to load Chart.js');
+        showCustomAlert('Failed to load charting library');
+    };
+    document.head.appendChild(chartScript);
+}
+
+// Helper functions for Flash Data Dashboard
+function downloadFlashReport(metrics, filters) {
+    try {
+        // Create CSV headers
+        const headers = [
+            'Category',
+            'Overall Hours',
+            'Conduct Hours',
+            'Audit Count',
+            'Site',
+            'Week',
+            'Year'
+        ];
+
+        // Create rows for each metric
+        const rows = [];
+        Object.entries(metrics).forEach(([category, data]) => {
+            rows.push([
+                category.replace(/([A-Z])/g, ' $1').trim(), // Format category name
+                data.overall.toFixed(2),
+                data.conduct.toFixed(2),
+                data.audits,
+                filters.site,
+                filters.week === 'all' ? 'All Weeks' : `Week ${filters.week}`,
+                filters.year
+            ]);
         });
+
+        // Add total row
+        const totals = Object.values(metrics).reduce((acc, curr) => ({
+            overall: acc.overall + curr.overall,
+            conduct: acc.conduct + curr.conduct,
+            audits: acc.audits + curr.audits
+        }), { overall: 0, conduct: 0, audits: 0 });
+
+        rows.push([
+            'TOTAL',
+            totals.overall.toFixed(2),
+            totals.conduct.toFixed(2),
+            totals.audits,
+            filters.site,
+            filters.week === 'all' ? 'All Weeks' : `Week ${filters.week}`,
+            filters.year
+        ]);
+
+        // Combine headers and rows
+        const csvContent = [
+            headers.join(','),
+            ...rows.map(row => row.join(','))
+        ].join('\n');
+
+        // Create and trigger download
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.setAttribute('href', url);
+        link.setAttribute('download', `flash_data_${filters.site}_${filters.year}_W${filters.week}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+    } catch (error) {
+        console.error('Error downloading report:', error);
+        showCustomAlert('Error downloading report');
+    }
+}
+
+async function showFlashDataDashboard() {
+    try {
+
+        await loadAwsSdk();
+        await loadCognitoSdk();
+
+
+        loadChartJS(() => {
+
+            // Create modal container
+            const modal = document.createElement('div');
+            modal.className = 'flash-data-modal';
+
+            // Add styles
+            const styles = document.createElement('style');
+            styles.textContent = `
+            .flash-data-modal {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.85);
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                z-index: 10002;
+                backdrop-filter: blur(5px);
+            }
+
+            .dashboard-content {
+                background: #1a1a1a;
+                width: 90%;
+                max-width: 1200px;
+                height: 90vh;
+                border-radius: 20px;
+                padding: 25px;
+                color: white;
+                position: relative;
+                overflow: hidden;
+                display: flex;
+                flex-direction: column;
+                animation: modalSlideIn 0.3s ease-out;
+            }
+
+            .dashboard-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 20px;
+                padding-bottom: 15px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            }
+
+            .dashboard-title {
+                font-size: 24px;
+                font-weight: 600;
+                color: #fff;
+            }
+
+            .dashboard-actions {
+                display: flex;
+                gap: 15px;
+                align-items: center;
+            }
+
+            .action-btn {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 8px 16px;
+                border: none;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 14px;
+                color: white;
+                background: rgba(255, 255, 255, 0.1);
+                transition: all 0.3s ease;
+            }
+
+            .action-btn:hover {
+                background: rgba(255, 255, 255, 0.2);
+            }
+
+            .download-btn {
+                background: #4CAF50;
+            }
+
+            .download-btn:hover {
+                background: #45a049;
+            }
+
+            .dashboard-filters {
+                display: flex;
+                gap: 15px;
+                margin-bottom: 20px;
+                background: rgba(255, 255, 255, 0.05);
+                padding: 15px;
+                border-radius: 12px;
+            }
+
+            .filter-select {
+                padding: 10px;
+                background: rgba(0, 0, 0, 0.3);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 8px;
+                color: white;
+                font-size: 14px;
+                min-width: 150px;
+                cursor: pointer;
+            }
+
+            .filter-select:hover {
+                border-color: rgba(255, 255, 255, 0.2);
+            }
+
+            .metrics-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                gap: 20px;
+                overflow-y: auto;
+                padding: 10px;
+            }
+
+            .metric-card {
+                background: rgba(255, 255, 255, 0.05);
+                border-radius: 12px;
+                padding: 20px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+            }
+
+            .metric-title {
+                font-size: 18px;
+                font-weight: 600;
+                color: #fff;
+                margin-bottom: 15px;
+                text-transform: capitalize;
+            }
+
+            .metric-content {
+                display: grid;
+                gap: 12px;
+            }
+
+            .metric-item {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 10px;
+                background: rgba(255, 255, 255, 0.03);
+                border-radius: 8px;
+            }
+
+            .metric-item span {
+                color: rgba(255, 255, 255, 0.7);
+            }
+
+            .metric-item strong {
+                color: #4CAF50;
+                font-size: 16px;
+            }
+
+            .total-metrics {
+                background: rgba(255, 255, 255, 0.05);
+                border-radius: 12px;
+                padding: 15px;
+                margin-bottom: 20px;
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
+            }
+
+            .total-metric-item {
+                text-align: center;
+                padding: 10px;
+                background: rgba(255, 255, 255, 0.03);
+                border-radius: 8px;
+            }
+
+            .total-metric-label {
+                color: rgba(255, 255, 255, 0.7);
+                font-size: 14px;
+                margin-bottom: 5px;
+            }
+
+            .total-metric-value {
+                font-size: 20px;
+                font-weight: 600;
+                color: #4CAF50;
+            }
+
+            .charts-container {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                grid-template-rows: 300px 300px;
+                gap: 20px;
+                margin-bottom: 20px;
+                padding: 20px;
+                background: rgba(255, 255, 255, 0.05);
+                border-radius: 12px;
+            }
+
+            .chart-wrapper {
+                background: rgba(0, 0, 0, 0.2);
+                border-radius: 8px;
+                padding: 15px;
+                height: 300px;
+            }
+
+.charts-section {
+    margin-bottom: 20px;
+}
+
+.chart-title {
+    color: white;
+    font-size: 16px;
+    font-weight: 500;
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+            .close-btn {
+                background: none;
+                border: none;
+                color: white;
+                font-size: 24px;
+                cursor: pointer;
+                padding: 5px;
+                opacity: 0.7;
+                transition: opacity 0.3s ease;
+            }
+
+            .close-btn:hover {
+                opacity: 1;
+            }
+
+            .loading {
+                text-align: center;
+                padding: 20px;
+                color: rgba(255, 255, 255, 0.7);
+            }
+
+            @keyframes modalSlideIn {
+                from {
+                    opacity: 0;
+                    transform: translateY(-20px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+
+            @media (max-width: 768px) {
+                .dashboard-filters {
+                    flex-direction: column;
+                }
+
+                .filter-select {
+                    width: 100%;
+                }
+            }
+        `;
+                document.head.appendChild(styles);
+
+                // Create dashboard content
+                modal.innerHTML = `
+    <div class="dashboard-content">
+        <div class="dashboard-header">
+            <h2 class="dashboard-title">Flash Data Dashboard</h2>
+            <div class="dashboard-actions">
+                <button class="action-btn download-btn">
+                    <i class="fas fa-download"></i>
+                    Download Report
+                </button>
+                <button class="close-btn">&times;</button>
+            </div>
+        </div>
+        <div class="dashboard-filters">
+            <select id="yearFilter" class="filter-select">
+                ${generateYearOptions()}
+            </select>
+            <select id="weekFilter" class="filter-select">
+                <option value="all">All Weeks</option>
+                ${Array.from({length: 52}, (_, i) =>
+                             `<option value="${i+1}">Week ${i+1}</option>`
+                ).join('')}
+            </select>
+            <select id="siteFilter" class="filter-select">
+                <option value="all">All Sites</option>
+                <option value="HYD">HYD</option>
+                <option value="DE">DE</option>
+                <option value="BCN">BCN</option>
+                <option value="PEK">PEK</option>
+            </select>
+        </div>
+        <div class="total-metrics"></div>
+        <div class="charts-section">
+            <div class="charts-container">
+                <div class="chart-wrapper">
+                    <h3 class="chart-title">Hours Distribution</h3>
+                    <canvas id="hoursChart"></canvas>
+                </div>
+                <div class="chart-wrapper">
+                    <h3 class="chart-title">Audit Distribution</h3>
+                    <canvas id="auditsChart"></canvas>
+                </div>
+                <div class="chart-wrapper">
+                    <h3 class="chart-title">Conduct Efficiency</h3>
+                    <canvas id="efficiencyChart"></canvas>
+                </div>
+                <div class="chart-wrapper">
+                    <h3 class="chart-title">Productivity Rate</h3>
+                    <canvas id="trendChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="metrics-grid">
+            <div class="loading">Loading data...</div>
+        </div>
+    </div>
+`;
+
+                document.body.appendChild(modal);
+
+                // Define activity groupings
+                const activityGroups = {
+                    dataDive: [
+                        'Data Dive',
+                        'CCRI Dive',
+                        'Non-DE Project',
+                        'Data Analysis',
+                        'VoS (Voice of Sellers)',
+                        'Atlas Validation',
+                        'Actionable Insights',
+                        'Mapping Project',
+                        'Reopen Insights',
+                        'CLRO Deep Dive',
+                        'NRR Deep Dive',
+                        'TTR Deep Dive',
+                        'Contact group validation',
+                        'RCE Dive',
+                        'Non RCE Dive'
+                    ],
+                    documentReview: [
+                        'Document Review',
+                        'DPM Request'
+                    ],
+                    testing: [
+                        'UAT',
+                        'Functional Testing',
+                        'FUAT'
+                    ],
+                    smeConsultation: [
+                        'Round Table',
+                        'Quick Question',
+                        'Side by Side'
+                    ]
+                };
+
+                // Define L3 labels for Overall Hours calculation
+                const overallL3Labels = [
+                    'Conduct Project',
+                    'Project Prep Review',
+                    'Quality Review by PL',
+                    'Post Project Clarity',
+                    'Project Rollup',
+                    'In-Project Meeting',
+                    'Multi-Site Calibration',
+                    'Project Rework',
+                    'Personal Quality Check',
+                    'Project Planning',
+                    'Defect Tracker Creation',
+                    'Quip Review and Update',
+                    'Project Scoping',
+                    'Non Conduct Project'
+                ];
+
+                // Function to update metrics
+                async function updateMetrics(site, week, year) {
+                    const metricsGrid = modal.querySelector('.metrics-grid');
+                    const totalMetrics = modal.querySelector('.total-metrics');
+                    metricsGrid.innerHTML = '<div class="loading">Loading data...</div>';
+                    totalMetrics.innerHTML = '';
+
+                    try {
+                        // Initialize metrics object for all groups first
+                        const metrics = {
+                            dataDive: { overall: 0, conduct: 0, audits: 0 },
+                            documentReview: { overall: 0, conduct: 0, audits: 0 },
+                            testing: { overall: 0, conduct: 0, audits: 0 },
+                            smeConsultation: { overall: 0, conduct: 0, audits: 0 }
+                        };
+
+                        // Get authentication and configure AWS
+                        const token = await AuthService.ensureAuthenticated();
+                        await configureAWS(token);
+
+                        const s3 = new AWS.S3();
+                        const bucketName = 'aux-data-bucket';
+                        const prefixes = ['Aura_NPT_', 'aux_data_'];
+
+                        let allData = [];
+
+                        // Fetch and process data from S3
+                        for (const prefix of prefixes) {
+                            const response = await s3.listObjectsV2({
+                                Bucket: bucketName,
+                                Prefix: prefix
+                            }).promise();
+
+                            for (const item of response.Contents) {
+                                const data = await s3.getObject({
+                                    Bucket: bucketName,
+                                    Key: item.Key
+                                }).promise();
+
+                                const rows = data.Body.toString('utf-8').split('\n');
+                                // Skip header row
+                                for (let i = 1; i < rows.length; i++) {
+                                    const row = rows[i].split(',');
+                                    if (row.length >= 13) {
+                                        allData.push({
+                                            date: new Date(row[0].trim()),
+                                            weekNo: parseInt(row[1].trim()),
+                                            username: row[2].trim(),
+                                            auxLabel1: row[3].trim(),
+                                            auxLabel2: row[4].trim(),
+                                            auxLabel3: row[5].trim(),
+                                            timeMinutes: parseFloat(row[6].trim()) || 0,
+                                            timeHours: parseFloat(row[7].trim()) || 0,
+                                            projectTitle: row[8].trim(),
+                                            relatedAudits: parseInt(row[9].trim()) || 0,
+                                            areYouPL: row[10].trim(),
+                                            comment: row[11].trim(),
+                                            site: row[12].trim()
+                                        });
+                                    }
+                                }
+                            }
+                        }
+
+                        // Filter data
+                        const filteredData = allData.filter(row => {
+                            const rowYear = row.date.getFullYear();
+                            return (site === 'all' || row.site === site) &&
+                                (week === 'all' || row.weekNo === parseInt(week)) &&
+                                rowYear === parseInt(year);
+                        });
+
+                        // Process filtered data
+                        filteredData.forEach(row => {
+                            const auxLabel2 = row.auxLabel2;
+                            const auxLabel3 = row.auxLabel3;
+                            const timeHours = parseFloat(row.timeHours) || 0;
+                            const audits = parseInt(row.relatedAudits) || 0;
+
+                            // Check each activity group
+                            if (activityGroups.dataDive.includes(auxLabel2)) {
+                                if (overallL3Labels.includes(auxLabel3)) {
+                                    metrics.dataDive.overall += timeHours;
+                                }
+                                if (auxLabel3 === 'Conduct Project') {
+                                    metrics.dataDive.conduct += timeHours;
+                                    metrics.dataDive.audits += audits;
+                                }
+                            }
+                            else if (activityGroups.documentReview.includes(auxLabel2)) {
+                                if (overallL3Labels.includes(auxLabel3)) {
+                                    metrics.documentReview.overall += timeHours;
+                                }
+                                if (auxLabel3 === 'Conduct Project') {
+                                    metrics.documentReview.conduct += timeHours;
+                                    metrics.documentReview.audits += audits;
+                                }
+                            }
+                            else if (activityGroups.testing.includes(auxLabel2)) {
+                                if (overallL3Labels.includes(auxLabel3)) {
+                                    metrics.testing.overall += timeHours;
+                                }
+                                if (auxLabel3 === 'Conduct Project') {
+                                    metrics.testing.conduct += timeHours;
+                                    metrics.testing.audits += audits;
+                                }
+                            }
+                            else if (activityGroups.smeConsultation.includes(auxLabel2)) {
+                                if (overallL3Labels.includes(auxLabel3)) {
+                                    metrics.smeConsultation.overall += timeHours;
+                                }
+                                if (auxLabel3 === 'Conduct Project') {
+                                    metrics.smeConsultation.conduct += timeHours;
+                                    metrics.smeConsultation.audits += audits;
+                                }
+                            }
+                        });
+
+                        // Round all metric values
+                        Object.keys(metrics).forEach(group => {
+                            metrics[group].overall = Math.round(metrics[group].overall * 100) / 100;
+                            metrics[group].conduct = Math.round(metrics[group].conduct * 100) / 100;
+                        });
+
+                        // Calculate totals
+                        const totals = {
+                            overall: 0,
+                            conduct: 0,
+                            audits: 0
+                        };
+
+                        Object.values(metrics).forEach(metric => {
+                            totals.overall += metric.overall;
+                            totals.conduct += metric.conduct;
+                            totals.audits += metric.audits;
+                        });
+
+                        // Round total values
+                        totals.overall = Math.round(totals.overall * 100) / 100;
+                        totals.conduct = Math.round(totals.conduct * 100) / 100;
+
+                        // Update total metrics display
+                        totalMetrics.innerHTML = `
+                        <div class="total-metric-item">
+                            <div class="total-metric-label">Total Overall Hours</div>
+                            <div class="total-metric-value">${totals.overall.toFixed(2)}</div>
+                        </div>
+                        <div class="total-metric-item">
+                            <div class="total-metric-label">Total Conduct Hours</div>
+                            <div class="total-metric-value">${totals.conduct.toFixed(2)}</div>
+                        </div>
+                        <div class="total-metric-item">
+                            <div class="total-metric-label">Total Audits</div>
+                            <div class="total-metric-value">${totals.audits}</div>
+                        </div>
+                    `;
+
+                        // Update metrics display
+                        metricsGrid.innerHTML = Object.entries(metrics)
+                            .map(([group, data]) => `
+                            <div class="metric-card">
+                                <div class="metric-title">${group.replace(/([A-Z])/g, ' $1').trim()}</div>
+                                <div class="metric-content">
+                                    <div class="metric-item">
+                                        <span>Overall Hours:</span>
+                                        <strong>${data.overall.toFixed(2)}</strong>
+                                    </div>
+                                    <div class="metric-item">
+                                        <span>Conduct Hours:</span>
+                                        <strong>${data.conduct.toFixed(2)}</strong>
+                                    </div>
+                                    <div class="metric-item">
+                                        <span>Audit Count:</span>
+                                        <strong>${data.audits}</strong>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('');
+
+                        // Store current metrics for download
+                        createCharts(metrics);
+                        metricsGrid.dataset.currentMetrics = JSON.stringify(metrics);
+
+                    } catch (error) {
+                        console.error('Error updating metrics:', error);
+                        metricsGrid.innerHTML = '<div class="loading">Error loading data</div>';
+                    }
+                }
+
+                // Add event listeners
+                modal.querySelector('.close-btn').addEventListener('click', () => {
+                    modal.remove();
+                    styles.remove();
+                });
+
+                modal.querySelector('.download-btn').addEventListener('click', () => {
+                    const metrics = JSON.parse(modal.querySelector('.metrics-grid').dataset.currentMetrics || '{}');
+                    const filters = {
+                        site: modal.querySelector('#siteFilter').value,
+                        week: modal.querySelector('#weekFilter').value,
+                        year: modal.querySelector('#yearFilter').value
+                    };
+                    downloadFlashReport(metrics, filters);
+                });
+
+                modal.querySelector('#yearFilter').addEventListener('change', (e) => {
+                    updateMetrics(
+                        modal.querySelector('#siteFilter').value,
+                        modal.querySelector('#weekFilter').value,
+                        e.target.value
+                    );
+                });
+
+                modal.querySelector('#weekFilter').addEventListener('change', (e) => {
+                    updateMetrics(
+                        modal.querySelector('#siteFilter').value,
+                        e.target.value,
+                        modal.querySelector('#yearFilter').value
+                    );
+                });
+
+                modal.querySelector('#siteFilter').addEventListener('change', (e) => {
+                    updateMetrics(
+                        e.target.value,
+                        modal.querySelector('#weekFilter').value,
+                        modal.querySelector('#yearFilter').value
+                    );
+                });
+
+                // Initial load with current year
+                const currentYear = new Date().getFullYear();
+                updateMetrics('all', 'all', currentYear);
+            });
+        } catch (error) {
+            console.error('Error showing Flash Data dashboard:', error);
+            showCustomAlert('Error loading Flash Data dashboard');
+        }
     }
 
-    function convertToUTC(timeString) {
-        const date = new Date();
-        const [hours, minutes, seconds] = timeString.split(':').map(Number);
-        date.setHours(hours, minutes, seconds);
-        return date.toUTCString();
-    }
+function createCharts(metrics) {
+    // Destroy all existing charts first
+    // Get all chart instances and destroy them
+    Chart.helpers.each(Chart.instances, (instance) => {
+        instance.destroy();
+    });
+    ['hoursChart', 'auditsChart', 'efficiencyChart', 'trendChart'].forEach(chartId => {
+        const existingChart = Chart.getChart(chartId);
+        if (existingChart) {
+            existingChart.destroy();
+        }
+    });
+    // Destroy existing charts if they exist
+    const existingCharts = Chart.getChart("hoursChart");
+    if (existingCharts) existingCharts.destroy();
+    const existingAuditCharts = Chart.getChart("auditsChart");
+    if (existingAuditCharts) existingAuditCharts.destroy();
 
-    function calculateTimeSpent(startTime) {
-        const endTime = new Date();
-        return endTime - new Date(startTime);
-    }
+    // Prepare data
+    const labels = Object.keys(metrics).map(key => key.replace(/([A-Z])/g, ' $1').trim());
+    const overallHours = Object.values(metrics).map(m => m.overall);
+    const conductHours = Object.values(metrics).map(m => m.conduct);
+    const audits = Object.values(metrics).map(m => m.audits);
 
-    function displayTimer() {
-        let timerElement = document.getElementById('aux-timer');
-        if (!timerElement) {
-            const widget = document.getElementById('aux-widget');
-            if (widget) {
-                timerElement = document.createElement('div');
-                timerElement.id = 'aux-timer';
-                timerElement.style.padding = '10px';
-                timerElement.style.marginTop = '10px';
-                timerElement.style.background = '#f0f0f0';
-                timerElement.style.borderRadius = '5px';
-                widget.appendChild(timerElement);
+    // Hours Chart
+    const hoursCtx = document.getElementById('hoursChart').getContext('2d');
+    new Chart(hoursCtx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Overall Hours',
+                    data: overallHours,
+                    backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderWidth: 1
+                },
+                {
+                    label: 'Conduct Hours',
+                    data: conductHours,
+                    backgroundColor: 'rgba(75, 192, 192, 0.5)',
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    borderWidth: 1
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    grid: {
+                        color: 'rgba(255, 255, 255, 0.1)'
+                    },
+                    ticks: {
+                        color: 'rgba(255, 255, 255, 0.7)'
+                    }
+                },
+                x: {
+                    grid: {
+                        color: 'rgba(255, 255, 255, 0.1)'
+                    },
+                    ticks: {
+                        color: 'rgba(255, 255, 255, 0.7)'
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    labels: {
+                        color: 'rgba(255, 255, 255, 0.7)'
+                    }
+                }
             }
         }
-        return timerElement;
-    }
+    });
 
-    function updateTimer(startTime, auxLabel, timerElement) {
-        if (animationFrameId) {
-            cancelAnimationFrame(animationFrameId);
+    // Audits Chart
+    const auditsCtx = document.getElementById('auditsChart').getContext('2d');
+    new Chart(auditsCtx, {
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: audits,
+                backgroundColor: [
+                    'rgba(255, 99, 132, 0.5)',
+                    'rgba(54, 162, 235, 0.5)',
+                    'rgba(255, 206, 86, 0.5)',
+                    'rgba(75, 192, 192, 0.5)'
+                ],
+                borderColor: [
+                    'rgba(255, 99, 132, 1)',
+                    'rgba(54, 162, 235, 1)',
+                    'rgba(255, 206, 86, 1)',
+                    'rgba(75, 192, 192, 1)'
+                ]
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'right',
+                    labels: {
+                        color: 'rgba(255, 255, 255, 0.7)'
+                    }
+                }
+            }
+        }
+    });
+    // Efficiency Chart (Conduct Hours / Overall Hours ratio)
+    const efficiencyCtx = document.getElementById('efficiencyChart').getContext('2d');
+    const efficiencyData = Object.entries(metrics).map(([group, data]) => ({
+        group: group.replace(/([A-Z])/g, ' $1').trim(),
+        efficiency: data.overall > 0 ? (data.conduct / data.overall * 100).toFixed(2) : 0
+    }));
+
+    new Chart(efficiencyCtx, {
+        type: 'radar',
+        data: {
+            labels: efficiencyData.map(d => d.group),
+            datasets: [{
+                label: 'Conduct Efficiency %',
+                data: efficiencyData.map(d => d.efficiency),
+                backgroundColor: 'rgba(153, 102, 255, 0.2)',
+                borderColor: 'rgba(153, 102, 255, 1)',
+                borderWidth: 2,
+                pointBackgroundColor: 'rgba(153, 102, 255, 1)',
+                pointRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                r: {
+                    beginAtZero: true,
+                    max: 100,
+                    ticks: {
+                        color: 'rgba(255, 255, 255, 0.7)'
+                    },
+                    grid: {
+                        color: 'rgba(255, 255, 255, 0.1)'
+                    },
+                    pointLabels: {
+                        color: 'rgba(255, 255, 255, 0.7)'
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    labels: {
+                        color: 'rgba(255, 255, 255, 0.7)'
+                    }
+                },
+                title: {
+                    display: true,
+                    text: 'Conduct Efficiency by Activity Type',
+                    color: 'rgba(255, 255, 255, 0.9)'
+                }
+            }
+        }
+    });
+
+    // Productivity Trend Chart (Audits per Conduct Hour)
+    const trendCtx = document.getElementById('trendChart').getContext('2d');
+    const productivityData = Object.entries(metrics).map(([group, data]) => ({
+        group: group.replace(/([A-Z])/g, ' $1').trim(),
+        productivity: data.conduct > 0 ? (data.audits / data.conduct).toFixed(2) : 0
+    }));
+
+    new Chart(trendCtx, {
+        type: 'line',
+        data: {
+            labels: productivityData.map(d => d.group),
+            datasets: [{
+                label: 'Audits per Conduct Hour',
+                data: productivityData.map(d => d.productivity),
+                borderColor: 'rgba(255, 159, 64, 1)',
+                backgroundColor: 'rgba(255, 159, 64, 0.2)',
+                tension: 0.4,
+                fill: true,
+                pointBackgroundColor: 'rgba(255, 159, 64, 1)',
+                pointRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    grid: {
+                        color: 'rgba(255, 255, 255, 0.1)'
+                    },
+                    ticks: {
+                        color: 'rgba(255, 255, 255, 0.7)'
+                    }
+                },
+                x: {
+                    grid: {
+                        color: 'rgba(255, 255, 255, 0.1)'
+                    },
+                    ticks: {
+                        color: 'rgba(255, 255, 255, 0.7)'
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    labels: {
+                        color: 'rgba(255, 255, 255, 0.7)'
+                    }
+                },
+                title: {
+                    display: true,
+                    text: 'Productivity Rate by Activity Type',
+                    color: 'rgba(255, 255, 255, 0.9)'
+                }
+            }
+        }
+    });
+}
+
+// Add click handler to Flash data button
+document.getElementById('flashDataButton').addEventListener('click', async () => {
+    const username = localStorage.getItem("currentUsername");
+    console.log('Current username:', username);
+
+    try {
+        const script = document.createElement('script');
+        script.src = 'https://mofi-l.github.io/aux-auth-config/auth-config.js';
+
+        await new Promise((resolve, reject) => {
+            script.onload = resolve;
+            script.onerror = reject;
+            document.head.appendChild(script);
+        });
+
+        const isAuthorized = window.AUTH_CONFIG.authorizedUsers.includes(username);
+        console.log('Authorization result:', isAuthorized);
+
+        document.head.removeChild(script);
+        delete window.AUTH_CONFIG;
+
+        if (!isAuthorized) {
+            showCustomAlert("You don't have permission to access the Flash Data Dashboard");
+            return;
         }
 
-        const currentElapsedTime = new Date().getTime() - startTime;
-        const cleanedAuxLabel = auxLabel.replace(/\s*-\s*N\/A\s*/g, '').trim();
-        const auxParts = cleanedAuxLabel.split(' - ').filter(part => part.trim() !== '');
+        showFlashDataDashboard();
+
+    } catch (error) {
+        console.error('Error checking authorization:', error);
+        showCustomAlert('Failed to verify access permissions: ' + error.message);
+    }
+});
+///////////////////////////////////////////
+//Timer Functions//
+function cleanupTimer() {
+    if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+    }
+}
+
+function formatLocalTime(timeString) {
+    if (!timeString) return 'N/A';
+
+    try {
+        // Handle ISO string format
+        if (timeString.includes('T')) {
+            return new Date(timeString).toLocaleTimeString('en-US', {
+                hour: 'numeric',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: true
+            });
+        }
+
+        // Handle HH:MM:SS format
+        if (timeString.includes(':')) {
+            const [hours, minutes, seconds] = timeString.split(':');
+            const date = new Date();
+            date.setHours(hours, minutes, seconds);
+            return date.toLocaleTimeString('en-US', {
+                hour: 'numeric',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: true
+            });
+        }
+
+        return 'N/A';
+    } catch (error) {
+        console.error('Error formatting time:', error);
+        return 'N/A';
+    }
+}
+
+function parseTime(timeString) {
+    if (typeof timeString === 'number') {
+        return timeString;
+    }
+
+    if (typeof timeString === 'string') {
+        timeString = timeString.replace(/\s*(AM|PM)/i, '').trim();
+
+        if (timeString.includes(':')) {
+            const [hours, minutes, seconds] = timeString.split(':').map(Number);
+            return ((hours * 3600) + (minutes * 60) + seconds) * 1000;
+        }
+    }
+
+    return parseInt(timeString, 10);
+}
+
+function formatTime(ms) {
+    // If input is a string in HH:MM:SS format, convert to milliseconds
+    if (typeof ms === 'string' && ms.includes(':')) {
+        const [hours, minutes, seconds] = ms.split(':').map(Number);
+        ms = ((hours * 3600 + minutes * 60 + seconds) * 1000);
+    }
+
+    // Ensure ms is a number
+    ms = Number(ms);
+
+    const totalSeconds = Math.floor(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
+
+function getLocalTimeString(date) {
+    return date.toLocaleTimeString('en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+}
+
+function convertToUTC(timeString) {
+    const date = new Date();
+    const [hours, minutes, seconds] = timeString.split(':').map(Number);
+    date.setHours(hours, minutes, seconds);
+    return date.toUTCString();
+}
+
+function calculateTimeSpent(startTime) {
+    const endTime = new Date();
+    return endTime - new Date(startTime);
+}
+
+function displayTimer() {
+    let timerElement = document.getElementById('aux-timer');
+    if (!timerElement) {
+        const widget = document.getElementById('aux-widget');
+        if (widget) {
+            timerElement = document.createElement('div');
+            timerElement.id = 'aux-timer';
+            timerElement.style.padding = '10px';
+            timerElement.style.marginTop = '10px';
+            timerElement.style.background = '#f0f0f0';
+            timerElement.style.borderRadius = '5px';
+            widget.appendChild(timerElement);
+        }
+    }
+    return timerElement;
+}
+
+function updateTimer(startTime, auxLabel, timerElement) {
+    if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+    }
+
+    const currentElapsedTime = new Date().getTime() - startTime;
+    const cleanedAuxLabel = auxLabel.replace(/\s*-\s*N\/A\s*/g, '').trim();
+    const auxParts = cleanedAuxLabel.split(' - ').filter(part => part.trim() !== '');
+    let displayedAuxLabel = '';
+
+    if (auxParts.length === 1) {
+        displayedAuxLabel = auxParts[0];
+    } else if (auxParts.length === 2) {
+        displayedAuxLabel = auxParts[1];
+    } else if (auxParts.length === 3) {
+        displayedAuxLabel = auxParts[2];
+    } else {
+        displayedAuxLabel = 'No AUX available';
+    }
+
+    timerElement.textContent = `${displayedAuxLabel} : ${formatTime(currentElapsedTime)}`;
+    timerElement.title = `Current AUX: ${cleanedAuxLabel}`;
+
+    animationFrameId = requestAnimationFrame(() => updateTimer(startTime, auxLabel, timerElement));
+}
+
+function startAUXTimer(auxLabel, elapsedTime = 0) {
+    cleanupTimer();
+
+    const auxState = JSON.parse(localStorage.getItem('auxState'));
+    if (auxState && auxState.auxLabel === auxLabel) {
+        updateTimerDisplay(auxLabel, calculateTimeSpent(auxState.startTime));
+        return;
+    }
+
+    stopAUXTimer();
+
+    const startTime = new Date().getTime() - elapsedTime;
+    localStorage.setItem('auxState', JSON.stringify({
+        auxLabel,
+        startTime,
+        timestamp: Date.now()
+    }));
+
+    const timerElement = displayTimer();
+    requestAnimationFrame(() => updateTimer(startTime, auxLabel, timerElement));
+
+    localStorage.setItem('auxChange', JSON.stringify({
+        action: 'startTimer',
+        auxLabel,
+        timestamp: Date.now()
+    }));
+
+    saveAUXData({
+        auxLabel,
+        timeSpent: 0,
+        date: formatDate(new Date()),
+        username: displayUsername(),
+        projectTitle: '',
+        areYouPL: '',
+        comment: ''
+    });
+    localStorage.setItem('auxStartTime', startTime);
+}
+
+function stopAUXTimer() {
+    cleanupTimer();
+    if (timerUpdateDebounce) {
+        clearTimeout(timerUpdateDebounce);
+    }
+
+    const auxState = JSON.parse(localStorage.getItem('auxState'));
+    if (auxState) {
+        const { auxLabel, startTime } = auxState;
+        const endTime = new Date();
+        const timeSpent = endTime - new Date(startTime);
+        saveAUXData({
+            date: formatDate(endTime),
+            username: displayUsername(),
+            auxLabel,
+            timeSpent
+        });
+        localStorage.removeItem('auxState');
+        localStorage.setItem('auxChange', JSON.stringify({
+            action: 'stopTimer',
+            timestamp: Date.now()
+        }));
+    }
+}
+
+function isAfter12PM() {
+    const now = new Date();
+    return now.getHours() >= 12;
+}
+
+function checkLoginStatus() {
+    const username = displayUsername();
+    if (username) {
+        localStorage.setItem('userLoggedIn', true);
+        console.log('User logged in:', username);
+
+        const now = new Date();
+        if (now.getHours() < 12) {
+            localStorage.setItem('loggedBefore12', true);
+        }
+
+        localStorage.removeItem('timerStatus');
+    }
+}
+
+function calculateElapsedTimeFrom12PM() {
+    const now = new Date();
+    const noon = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
+    const elapsedTime = now - noon;
+
+    if (elapsedTime < 0) {
+        return 0;
+    }
+
+    return elapsedTime;
+}
+
+function restoreTimer() {
+    const auxState = JSON.parse(localStorage.getItem('auxState'));
+    const manualAUXChange = localStorage.getItem('manualAUXChange');
+
+    if (auxState && auxState.startTime) {
+        const startTime = auxState.startTime;
+        let auxLabel = auxState.auxLabel;
+
+        auxLabel = auxLabel.replace(/\s*-\s*N\/A\s*/g, '').trim();
+
+        const auxParts = auxLabel.split(' - ').filter(part => part.trim() !== '');
+
         let displayedAuxLabel = '';
 
         if (auxParts.length === 1) {
@@ -10364,380 +13443,254 @@
             displayedAuxLabel = 'No AUX available';
         }
 
-        timerElement.textContent = `${displayedAuxLabel} : ${formatTime(currentElapsedTime)}`;
-        timerElement.title = `Current AUX: ${cleanedAuxLabel}`;
-
-        animationFrameId = requestAnimationFrame(() => updateTimer(startTime, auxLabel, timerElement));
-    }
-
-    function startAUXTimer(auxLabel, elapsedTime = 0) {
-        cleanupTimer();
-
-        const auxState = JSON.parse(localStorage.getItem('auxState'));
-        if (auxState && auxState.auxLabel === auxLabel) {
-            updateTimerDisplay(auxLabel, calculateTimeSpent(auxState.startTime));
-            return;
-        }
-
-        stopAUXTimer();
-
-        const startTime = new Date().getTime() - elapsedTime;
-        localStorage.setItem('auxState', JSON.stringify({
-            auxLabel,
-            startTime,
-            timestamp: Date.now()
-        }));
+        updateAuxSelection();
 
         const timerElement = displayTimer();
-        requestAnimationFrame(() => updateTimer(startTime, auxLabel, timerElement));
+        const timerId = setInterval(() => {
+            const elapsedTime = calculateTimeSpent(startTime);
+            timerElement.textContent = `${displayedAuxLabel} : ${formatTime(elapsedTime)}`;
+            timerElement.title = `Current AUX: ${auxLabel}`;
+            timerElement.style.color = 'black';
+        }, 1000);
 
-        localStorage.setItem('auxChange', JSON.stringify({
-            action: 'startTimer',
-            auxLabel,
-            timestamp: Date.now()
-        }));
+        localStorage.setItem('auxTimerId', timerId.toString());
+    }
+}
 
-        saveAUXData({
-            auxLabel,
-            timeSpent: 0,
-            date: formatDate(new Date()),
-            username: displayUsername(),
-            projectTitle: '',
-            areYouPL: '',
-            comment: ''
-        });
-        localStorage.setItem('auxStartTime', startTime);
+function updateAuxSelection(auxLabel) {
+    if (!auxLabel) return;
+
+    const parts = auxLabel.split(' - ');
+    const l1Value = parts[0];
+    const l2Value = parts[1] !== 'N/A' ? parts[1] : '';
+    const l3Value = parts[2] !== 'N/A' ? parts[2] : '';
+
+    const auxL1 = document.getElementById('aux-l1');
+    const auxL2Container = document.getElementById('aux-l2-container');
+    const auxL3Container = document.getElementById('aux-l3-container');
+    if (auxL1 && l1Value) {
+        auxL1.value = Object.keys(l1Names).find(key => l1Names[key] === l1Value);
+        auxL1.dispatchEvent(new Event('change'));
     }
 
-    function stopAUXTimer() {
-        cleanupTimer();
-        if (timerUpdateDebounce) {
-            clearTimeout(timerUpdateDebounce);
-        }
-
-        const auxState = JSON.parse(localStorage.getItem('auxState'));
-        if (auxState) {
-            const { auxLabel, startTime } = auxState;
-            const endTime = new Date();
-            const timeSpent = endTime - new Date(startTime);
-            saveAUXData({
-                date: formatDate(endTime),
-                username: displayUsername(),
-                auxLabel,
-                timeSpent
-            });
-            localStorage.removeItem('auxState');
-            localStorage.setItem('auxChange', JSON.stringify({
-                action: 'stopTimer',
-                timestamp: Date.now()
-            }));
-        }
-    }
-
-    function isAfter12PM() {
-        const now = new Date();
-        return now.getHours() >= 12;
-    }
-
-    function checkLoginStatus() {
-        const username = displayUsername();
-        if (username) {
-            localStorage.setItem('userLoggedIn', true);
-            console.log('User logged in:', username);
-
-            const now = new Date();
-            if (now.getHours() < 12) {
-                localStorage.setItem('loggedBefore12', true);
-            }
-
-            localStorage.removeItem('timerStatus');
-        }
-    }
-
-    function calculateElapsedTimeFrom12PM() {
-        const now = new Date();
-        const noon = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
-        const elapsedTime = now - noon;
-
-        if (elapsedTime < 0) {
-            return 0;
-        }
-
-        return elapsedTime;
-    }
-
-    function restoreTimer() {
-        const auxState = JSON.parse(localStorage.getItem('auxState'));
-        const manualAUXChange = localStorage.getItem('manualAUXChange');
-
-        if (auxState && auxState.startTime) {
-            const startTime = auxState.startTime;
-            let auxLabel = auxState.auxLabel;
-
-            auxLabel = auxLabel.replace(/\s*-\s*N\/A\s*/g, '').trim();
-
-            const auxParts = auxLabel.split(' - ').filter(part => part.trim() !== '');
-
-            let displayedAuxLabel = '';
-
-            if (auxParts.length === 1) {
-                displayedAuxLabel = auxParts[0];
-            } else if (auxParts.length === 2) {
-                displayedAuxLabel = auxParts[1];
-            } else if (auxParts.length === 3) {
-                displayedAuxLabel = auxParts[2];
-            } else {
-                displayedAuxLabel = 'No AUX available';
-            }
-
-            updateAuxSelection();
-
-            const timerElement = displayTimer();
-            const timerId = setInterval(() => {
-                const elapsedTime = calculateTimeSpent(startTime);
-                timerElement.textContent = `${displayedAuxLabel} : ${formatTime(elapsedTime)}`;
-                timerElement.title = `Current AUX: ${auxLabel}`;
-                timerElement.style.color = 'black';
-            }, 1000);
-
-            localStorage.setItem('auxTimerId', timerId.toString());
-        }
-    }
-
-    function updateAuxSelection(auxLabel) {
-        if (!auxLabel) return;
-
-        const parts = auxLabel.split(' - ');
-        const l1Value = parts[0];
-        const l2Value = parts[1] !== 'N/A' ? parts[1] : '';
-        const l3Value = parts[2] !== 'N/A' ? parts[2] : '';
-
-        const auxL1 = document.getElementById('aux-l1');
-        const auxL2Container = document.getElementById('aux-l2-container');
-        const auxL3Container = document.getElementById('aux-l3-container');
-        if (auxL1 && l1Value) {
-            auxL1.value = Object.keys(l1Names).find(key => l1Names[key] === l1Value);
-            auxL1.dispatchEvent(new Event('change'));
+    setTimeout(() => {
+        const auxL2 = document.getElementById('aux-l2');
+        if (auxL2 && l2Value) {
+            auxL2.value = l2Value;
+            auxL2.dispatchEvent(new Event('change'));
         }
 
         setTimeout(() => {
-            const auxL2 = document.getElementById('aux-l2');
-            if (auxL2 && l2Value) {
-                auxL2.value = l2Value;
-                auxL2.dispatchEvent(new Event('change'));
+            const auxL3 = document.getElementById('aux-l3');
+            if (auxL3 && l3Value) {
+                auxL3.value = l3Value;
+                auxL3.dispatchEvent(new Event('change'));
             }
-
-            setTimeout(() => {
-                const auxL3 = document.getElementById('aux-l3');
-                if (auxL3 && l3Value) {
-                    auxL3.value = l3Value;
-                    auxL3.dispatchEvent(new Event('change'));
-                }
-            }, 100);
         }, 100);
-    }
+    }, 100);
+}
 
-    function updateTimerDisplay(auxLabel, elapsedTime) {
-        const timerElement = displayTimer();
+function updateTimerDisplay(auxLabel, elapsedTime) {
+    const timerElement = displayTimer();
 
-        if (timerElement) {
-            const cleanedAuxLabel = auxLabel.replace(/\s*-\s*N\/A\s*/g, '').trim();
-            const auxParts = cleanedAuxLabel.split(' - ').filter(part => part.trim() !== '');
+    if (timerElement) {
+        const cleanedAuxLabel = auxLabel.replace(/\s*-\s*N\/A\s*/g, '').trim();
+        const auxParts = cleanedAuxLabel.split(' - ').filter(part => part.trim() !== '');
 
-            let displayedAuxLabel = '';
+        let displayedAuxLabel = '';
 
-            if (auxParts.length === 1) {
-                displayedAuxLabel = auxParts[0];
-            } else if (auxParts.length === 2) {
-                displayedAuxLabel = auxParts[1];
-            } else if (auxParts.length === 3) {
-                displayedAuxLabel = auxParts[2];
-            } else {
-                displayedAuxLabel = 'No AUX available';
-            }
-            timerElement.textContent = `${displayedAuxLabel} : ${formatTime(elapsedTime)}`;
-            timerElement.title = `Current AUX: ${cleanedAuxLabel || 'No AUX available'}`;
+        if (auxParts.length === 1) {
+            displayedAuxLabel = auxParts[0];
+        } else if (auxParts.length === 2) {
+            displayedAuxLabel = auxParts[1];
+        } else if (auxParts.length === 3) {
+            displayedAuxLabel = auxParts[2];
         } else {
-            console.error('Timer element not found.');
+            displayedAuxLabel = 'No AUX available';
+        }
+        timerElement.textContent = `${displayedAuxLabel} : ${formatTime(elapsedTime)}`;
+        timerElement.title = `Current AUX: ${cleanedAuxLabel || 'No AUX available'}`;
+    } else {
+        console.error('Timer element not found.');
+    }
+}
+
+// Storage event listener with debounce
+window.addEventListener('storage', function(event) {
+    if (event.key === 'auxState') {
+        const auxState = JSON.parse(event.newValue);
+        if (auxState) {
+            cleanupTimer();
+            const startTime = auxState.startTime;
+            const elapsedTime = calculateTimeSpent(auxState.startTime);
+            const auxLabel = auxState.auxLabel;
+            const timerElement = displayTimer();
+
+            updateAuxSelection(auxLabel);
+            updateTimerDisplay(auxLabel, elapsedTime);
+
+            requestAnimationFrame(() => updateTimer(startTime, auxLabel, timerElement));
+        }
+    } else if (event.key === 'auxChange') {
+        const data = JSON.parse(event.newValue);
+        if (data && data.action === 'startTimer') {
+            const auxState = JSON.parse(localStorage.getItem('auxState'));
+            if (auxState && auxState.timestamp === data.timestamp) {
+                updateAuxSelection(data.auxLabel);
+            }
+        } else if (data && data.action === 'stopTimer') {
+            cleanupTimer();
+            updateTimerDisplay('', 0);
         }
     }
+});
 
-    // Storage event listener with debounce
-    window.addEventListener('storage', function(event) {
-        if (event.key === 'auxState') {
-            const auxState = JSON.parse(event.newValue);
-            if (auxState) {
-                cleanupTimer();
-                const startTime = auxState.startTime;
-                const elapsedTime = calculateTimeSpent(auxState.startTime);
-                const auxLabel = auxState.auxLabel;
-                const timerElement = displayTimer();
+// Cleanup on page unload
+window.addEventListener('unload', () => {
+    cleanupTimer();
+    if (timerUpdateDebounce) {
+        clearTimeout(timerUpdateDebounce);
+    }
+});
 
-                updateAuxSelection(auxLabel);
-                updateTimerDisplay(auxLabel, elapsedTime);
+const debouncedSendUpdate = debounce(sendAuxUpdate, 1000);
 
-                requestAnimationFrame(() => updateTimer(startTime, auxLabel, timerElement));
-            }
-        } else if (event.key === 'auxChange') {
-            const data = JSON.parse(event.newValue);
-            if (data && data.action === 'startTimer') {
-                const auxState = JSON.parse(localStorage.getItem('auxState'));
-                if (auxState && auxState.timestamp === data.timestamp) {
-                    updateAuxSelection(data.auxLabel);
-                }
-            } else if (data && data.action === 'stopTimer') {
-                cleanupTimer();
-                updateTimerDisplay('', 0);
-            }
-        }
-    });
-
-    // Cleanup on page unload
-    window.addEventListener('unload', () => {
-        cleanupTimer();
-        if (timerUpdateDebounce) {
-            clearTimeout(timerUpdateDebounce);
-        }
-    });
-
-    const debouncedSendUpdate = debounce(sendAuxUpdate, 1000);
-
-    // Debounce function for search inputs
-    function debounce(func, wait) {
-        let timeout;
-        return function executedFunction(...args) {
-            const later = () => {
-                clearTimeout(timeout);
-                func(...args);
-            };
+// Debounce function for search inputs
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
             clearTimeout(timeout);
-            timeout = setTimeout(later, wait);
+            func(...args);
         };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+//Function to ensure proper cleanup when switching AUX states
+async function handleAuxStateChange(newAuxLabel) {
+    cleanupTimer();
+    startAUXTimer(newAuxLabel);
+
+    // Store logout time if going offline
+    if (newAuxLabel.toLowerCase().includes('offline')) {
+        await setLogoutTime(newAuxLabel);
     }
 
-    //Function to ensure proper cleanup when switching AUX states
-    async function handleAuxStateChange(newAuxLabel) {
-        cleanupTimer();
-        startAUXTimer(newAuxLabel);
+    const currentState = JSON.parse(localStorage.getItem('auxState')) || {};
+    const now = new Date().getTime();
 
-        const currentState = JSON.parse(localStorage.getItem('auxState')) || {};
-        const now = new Date().getTime();
-
-        // If previous state was "Stepping Away", calculate and accumulate time
-        if (currentState.auxLabel && currentState.auxLabel.includes('Stepping Away')) {
-            const steppingAwayDuration = now - currentState.startTime;
-            const totalSteppingAwayTime = parseInt(localStorage.getItem('totalSteppingAwayTime') || '0');
-            localStorage.setItem('totalSteppingAwayTime', totalSteppingAwayTime + steppingAwayDuration);
-        }
-
-        // Update current state
-        const newState = {
-            auxLabel: newAuxLabel,
-            startTime: now,
-            isPaused: false,
-            lastUpdate: now
-        };
-
-        localStorage.setItem('auxState', JSON.stringify(newState));
-
-        try {
-            await debouncedSendUpdate();
-        } catch (error) {
-            console.error('Failed to send AUX update:', error);
-        }
+    // If previous state was "Stepping Away", calculate and accumulate time
+    if (currentState.auxLabel && currentState.auxLabel.includes('Stepping Away')) {
+        const steppingAwayDuration = now - currentState.startTime;
+        const totalSteppingAwayTime = parseInt(localStorage.getItem('totalSteppingAwayTime') || '0');
+        localStorage.setItem('totalSteppingAwayTime', totalSteppingAwayTime + steppingAwayDuration);
     }
 
+    // Update current state
+    const newState = {
+        auxLabel: newAuxLabel,
+        startTime: now,
+        isPaused: false,
+        lastUpdate: now
+    };
+
+    localStorage.setItem('auxState', JSON.stringify(newState));
+
+    try {
+        await debouncedSendUpdate();
+    } catch (error) {
+        console.error('Failed to send AUX update:', error);
+    }
+}
+
+checkForUpdates();
+setInitialLoginTime();
+resetDailySteppingAwayTime();
+injectAuthStyles();
+addFileInput();
+restoreTimer();
+checkLoginStatus();
+///////////////////////////////////////////////////////////////
+//DOM content loaded
+document.addEventListener('DOMContentLoaded', () => {
     checkForUpdates();
-    setInitialLoginTime();
     resetDailySteppingAwayTime();
+    setInitialLoginTime();
     injectAuthStyles();
-    addFileInput();
+    cleanupTimer();
     restoreTimer();
+    addFileInput();
     checkLoginStatus();
-    ///////////////////////////////////////////////////////////////
-    //DOM content loaded
-    document.addEventListener('DOMContentLoaded', () => {
-        checkForUpdates();
-        resetDailySteppingAwayTime();
-        setInitialLoginTime();
-        injectAuthStyles();
-        cleanupTimer();
-        restoreTimer();
-        addFileInput();
-        checkLoginStatus();
 
-        const auxState = JSON.parse(localStorage.getItem('auxState'));
-        if (auxState && auxState.auxLabel) {
-            updateAuxSelection(auxState.auxLabel);
-        }
-    });
+    const auxState = JSON.parse(localStorage.getItem('auxState'));
+    if (auxState && auxState.auxLabel) {
+        updateAuxSelection(auxState.auxLabel);
+    }
+});
 
-    document.addEventListener('change', function(event) {
-        const auxLabel = event.target.value;
-        if (event.target && event.target.id === 'aux-label') {
-            if (auxLabel) {
-                startAUXTimer(auxLabel);
-            } else {
-                stopAUXTimer();
-            }
-        }
-    });
-
-    // Add version checking function
-    async function checkForUpdates() {
-        try {
-            const response = await fetch('https://raw.githubusercontent.com/Mofi-l/aura-tool/main/aura.meta.js');
-            const metaContent = await response.text();
-
-            // Extract version from meta file
-            const versionMatch = metaContent.match(/@version\s+(\d+\.\d+)/);
-            if (versionMatch) {
-                const latestVersion = versionMatch[1];
-                const currentVersion = "3.01";
-
-                if (latestVersion > currentVersion) {
-                    showCustomConfirm(
-                        'A new version is available. Would you like to update now?',
-                        (confirmed) => {
-                            if (confirmed) {
-                                // Open Tampermonkey's update URL
-                                window.location.href = 'https://raw.githubusercontent.com/Mofi-l/aura-tool/main/aura.user.js';
-                            }
-                        }
-                    );
-                }
-            }
-        } catch (error) {
-            console.error('Error checking for updates:', error);
+document.addEventListener('change', function(event) {
+    const auxLabel = event.target.value;
+    if (event.target && event.target.id === 'aux-label') {
+        if (auxLabel) {
+            startAUXTimer(auxLabel);
+        } else {
+            stopAUXTimer();
         }
     }
+});
 
-    //Quotes and Version
-    const versionText = document.createElement('div');
-    versionText.id = 'version-text';
-    versionText.style.position = 'absolute';
-    versionText.style.bottom = '10px';
-    versionText.style.right = '10px';
-    versionText.style.color = 'white';
-    versionText.style.cursor = 'pointer';
-    versionText.style.fontSize = '12px';
-    versionText.innerText = `${currentVersion}`;
+// Add version checking function
+async function checkForUpdates() {
+    try {
+        const response = await fetch('https://raw.githubusercontent.com/Mofi-l/aura-tool/main/aura.meta.js');
+        const metaContent = await response.text();
 
-    const widget = document.getElementById('aux-widget');
-    widget.appendChild(versionText);
+        const versionMatch = metaContent.match(/@version\s+(\d+\.\d+)/);
+        if (versionMatch) {
+            const latestVersion = versionMatch[1];
+            const currentVersion = "3.02"; // Hardcode current version here
 
-    const gistURL = "https://gist.githubusercontent.com/Mofi-l/878a781fdb73476ad6751c81834badb9/raw/bcdf6e2dbe6375e0ee2b30014d9c9d99b9aeea00/quotes.json";
+            if (parseFloat(latestVersion) > parseFloat(currentVersion)) {
+                showCustomConfirm('A new version is available. Would you like to update now?', (confirmed) => {
+                    if (confirmed) {
+                        window.location.href = 'https://raw.githubusercontent.com/Mofi-l/aura-tool/main/aura.user.js';
+                    }
+                });
+            }
+        }
+    } catch (error) {
+        console.error('Error checking for updates:', error);
+    }
+}
 
-    versionText.addEventListener('mouseenter', () => {
-        fetch(gistURL)
-            .then(response => response.json())
-            .then(data => {
-            const randomQuote = data[Math.floor(Math.random() * data.length)];
-            versionText.setAttribute('title', randomQuote);
-        })
-            .catch(err => {
-            console.error('Failed to fetch quotes:', err);
-            versionText.setAttribute('title', 'Error fetching quote.');
-        });
+//Quotes and Version
+const versionText = document.createElement('div');
+versionText.id = 'version-text';
+versionText.style.position = 'absolute';
+versionText.style.bottom = '10px';
+versionText.style.right = '10px';
+versionText.style.color = 'white';
+versionText.style.cursor = 'pointer';
+versionText.style.fontSize = '12px';
+versionText.innerText = `${currentVersion}`;
+
+const widget = document.getElementById('aux-widget');
+widget.appendChild(versionText);
+
+const gistURL = "https://gist.githubusercontent.com/Mofi-l/878a781fdb73476ad6751c81834badb9/raw/bcdf6e2dbe6375e0ee2b30014d9c9d99b9aeea00/quotes.json";
+
+versionText.addEventListener('mouseenter', () => {
+    fetch(gistURL)
+        .then(response => response.json())
+        .then(data => {
+        const randomQuote = data[Math.floor(Math.random() * data.length)];
+        versionText.setAttribute('title', randomQuote);
+    })
+        .catch(err => {
+        console.error('Failed to fetch quotes:', err);
+        versionText.setAttribute('title', 'Error fetching quote.');
     });
+});
 })();
